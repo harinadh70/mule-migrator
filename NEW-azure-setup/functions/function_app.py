@@ -380,6 +380,9 @@ def _extract_mule_project_from_zip(zip_bytes: bytes) -> dict:
     """
     Extract ALL important MuleSoft project files from a ZIP.
 
+    Handles multi-project ZIPs by detecting all projects and processing
+    them together (combining all XML flows into one migration).
+
     Returns dict with keys:
       xml_files      – list[dict] of {name, content, size}  (Mule flow XMLs)
       config_files   – list[dict] of {name, content}        (YAML/properties)
@@ -392,6 +395,7 @@ def _extract_mule_project_from_zip(zip_bytes: bytes) -> dict:
       log4j2_xml     – str | None                           (log4j2.xml content)
       project_root   – str, detected project root within the ZIP
       pom_metadata   – dict with groupId, artifactId, version, connectors
+      projects_found – int, number of MuleSoft projects detected
     """
     import zipfile
     import io
@@ -400,18 +404,34 @@ def _extract_mule_project_from_zip(zip_bytes: bytes) -> dict:
     zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
     all_names = zf.namelist()
 
-    # ── Detect project root (handle nested structures) ───────────────
-    # Look for pom.xml or src/main/mule/ to find the project root
-    project_root = ""
+    # ── Detect ALL project roots (handle multi-project ZIPs) ─────────
+    project_roots = []
     for name in all_names:
         parts = name.split("/")
         if any(p in _SKIP_NAMES for p in parts):
             continue
+        # A project root has pom.xml with mule-application packaging
         if parts[-1] == "pom.xml":
-            project_root = "/".join(parts[:-1])
-            break
-    # Fallback: find src/main/mule
-    if not project_root:
+            root = "/".join(parts[:-1])
+            if root not in project_roots:
+                project_roots.append(root)
+
+    # If too many projects (>20), find the ones with src/main/mule/
+    if len(project_roots) > 20:
+        mule_projects = []
+        for root in project_roots:
+            prefix = (root + "/") if root else ""
+            mule_dir = f"{prefix}src/main/mule/"
+            if any(n.startswith(mule_dir) and n.endswith(".xml") for n in all_names):
+                mule_projects.append(root)
+        if mule_projects:
+            project_roots = mule_projects
+
+    # Use first project as primary (for pom.xml metadata)
+    project_root = project_roots[0] if project_roots else ""
+
+    # Fallback: find src/main/mule if no pom.xml found
+    if not project_roots:
         for name in all_names:
             parts = name.split("/")
             if any(p in _SKIP_NAMES for p in parts):
@@ -423,6 +443,7 @@ def _extract_mule_project_from_zip(zip_bytes: bytes) -> dict:
                     break
             except (ValueError, IndexError):
                 continue
+        project_roots = [project_root] if project_root else [""]
 
     prefix = (project_root + "/") if project_root else ""
 
@@ -445,9 +466,24 @@ def _extract_mule_project_from_zip(zip_bytes: bytes) -> dict:
     mule_artifact: str | None = None
     log4j2_xml: str | None = None
 
+    # Build prefix sets for ALL detected projects
+    all_mule_dirs = set()
+    all_resources_dirs = set()
+    all_java_dirs = set()
+    for root in project_roots:
+        p = (root + "/") if root else ""
+        all_mule_dirs.add(f"{p}src/main/mule/")
+        all_resources_dirs.add(f"{p}src/main/resources/")
+        all_java_dirs.add(f"{p}src/main/java/")
+
+    prefix = (project_root + "/") if project_root else ""
     mule_dir = f"{prefix}src/main/mule/"
     resources_dir = f"{prefix}src/main/resources/"
     java_dir = f"{prefix}src/main/java/"
+
+    MAX_XML_FILES = 100  # Safety limit
+    MAX_TOTAL_SIZE = 20_000_000  # 20MB text content limit
+    total_text_size = 0
 
     for name in sorted(all_names):
         # Skip directories and junk
@@ -477,15 +513,18 @@ def _extract_mule_project_from_zip(zip_bytes: bytes) -> dict:
             log4j2_xml = _read_text(name)
             continue
 
-        # ── Mule XML files in src/main/mule/ or project root ────
+        # ── Mule XML files in src/main/mule/ (ANY project) or root ────
         if lower.endswith(".xml"):
-            in_mule_dir = name.startswith(mule_dir)
+            in_any_mule_dir = any(name.startswith(d) for d in all_mule_dirs)
             at_root = (prefix and name.startswith(prefix) and "/" not in name[len(prefix):])
             at_zip_root = (not prefix and "/" not in name)
 
-            if in_mule_dir or at_root or at_zip_root:
+            if (in_any_mule_dir or at_root or at_zip_root) and len(xml_files) < MAX_XML_FILES:
                 content = _read_text(name)
                 if content and _is_mule_xml(content):
+                    total_text_size += len(content)
+                    if total_text_size > MAX_TOTAL_SIZE:
+                        continue
                     xml_files.append({
                         "name": rel_name,
                         "content": content,
@@ -582,6 +621,7 @@ def _extract_mule_project_from_zip(zip_bytes: bytes) -> dict:
         "project_root": project_root,
         "pom_metadata": pom_metadata,
         "mule_version": mule_version,
+        "projects_found": len(project_roots),
     }
 
 

@@ -2,6 +2,8 @@
 
 This folder contains **all Azure-specific files** for deploying the MuleSoft-to-SpringBoot Agentic AI Platform on Azure Cloud. No existing project files are modified.
 
+https://nice-rock-0f9182f00.6.azurestaticapps.net/dashboard
+
 ## Folder Structure
 
 ```

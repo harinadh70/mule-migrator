@@ -35,7 +35,7 @@ def _get_openai_client():
     from openai import AzureOpenAI
 
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-    api_key = os.getenv("AZURE_OPENAI_KEY", "")
+    api_key = os.getenv("AZURE_OPENAI_API_KEY", os.getenv("AZURE_OPENAI_KEY", ""))
 
     if api_key:
         _openai_client = AzureOpenAI(
@@ -130,7 +130,7 @@ async def index_document(
 async def search(
     query: str,
     top_k: int = 5,
-    score_threshold: float = 0.65,
+    score_threshold: float = 0.35,
     category: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """

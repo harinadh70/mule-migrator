@@ -263,3 +263,72 @@ export async function retryMigration(id: string): Promise<MigrationJob> {
   );
   return response.data;
 }
+
+/** Upload a MuleSoft project ZIP file and create a migration from it. */
+export async function uploadMigrationZip(
+  file: File,
+  projectName?: string,
+  groupId?: string,
+  javaVersion?: string,
+  aiEnhancement?: boolean,
+  onUploadProgress?: (progress: number) => void
+): Promise<MigrationJob & { upload_summary?: UploadSummary }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (projectName) formData.append("project_name", projectName);
+  if (groupId) formData.append("group_id", groupId);
+  if (javaVersion) formData.append("java_version", javaVersion);
+  if (aiEnhancement) formData.append("ai_enhancement", "true");
+
+  const response = await apiClient.post<any>("/migrations/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (progressEvent) => {
+      if (onUploadProgress && progressEvent.total) {
+        const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        onUploadProgress(pct);
+      }
+    },
+  });
+
+  const job = response.data;
+  return {
+    id: job.id,
+    name: job.project_name,
+    status: job.status,
+    sourceXml: "",
+    sourceType: "mule4",
+    targetFramework: "spring-boot",
+    config: {
+      groupId: job.group_id || groupId || "",
+      artifactId: "",
+      basePackage: "",
+      javaVersion: job.java_version || javaVersion || "17",
+      springBootVersion: "3.2",
+      buildTool: "maven",
+      includeTests: true,
+      includeSwagger: true,
+      includeDocs: true,
+      llmProvider: aiEnhancement ? "azure_openai" : "",
+      llmModel: aiEnhancement ? "gpt-4.1" : "",
+    },
+    files: [],
+    agentTraces: [],
+    summary: job.summary || undefined,
+    error: undefined,
+    createdAt: job.created_at,
+    updatedAt: job.created_at,
+    startedAt: job.started_at,
+    completedAt: job.completed_at,
+    durationMs: job.duration_ms,
+    tokensUsed: job.total_tokens_used,
+    upload_summary: job.upload_summary,
+  };
+}
+
+export interface UploadSummary {
+  xml_files_found: number;
+  config_files_found: number;
+  project_root: string;
+  xml_file_names: string[];
+  config_file_names: string[];
+}

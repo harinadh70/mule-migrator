@@ -6,6 +6,7 @@ registered on a single ``FunctionApp`` instance.
 
 HTTP Triggers:
   POST   /api/v2/migrations          Create migration (enqueue)
+  POST   /api/v2/migrations/upload   Upload ZIP / folder (multipart)
   GET    /api/v2/migrations           List migrations (paginated)
   GET    /api/v2/migrations/{id}      Get migration detail
   GET    /api/v2/migrations/{id}/files          Get generated files
@@ -356,6 +357,498 @@ async def create_migration(req: func.HttpRequest) -> func.HttpResponse:
     logger.info("migration.created: id=%s project=%s", migration["id"], project_name)
 
     return _json_response(migration, status_code=202)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  MIGRATIONS — Upload ZIP / Folder
+# ═══════════════════════════════════════════════════════════════════════════
+
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
+
+# Directories and files to skip when scanning ZIPs
+_SKIP_NAMES = {"__MACOSX", ".DS_Store", "__pycache__", ".git", "target", "node_modules", ".mule"}
+
+
+def _is_mule_xml(content: str) -> bool:
+    """Return True if *content* looks like a MuleSoft XML file (has <mule root)."""
+    # Quick heuristic — look in first 2 KB for the <mule element
+    head = content[:2048]
+    return "<mule" in head and ("http://www.mulesoft.org" in head or "mule-" in head)
+
+
+def _extract_mule_project_from_zip(zip_bytes: bytes) -> dict:
+    """
+    Extract ALL important MuleSoft project files from a ZIP.
+
+    Returns dict with keys:
+      xml_files      – list[dict] of {name, content, size}  (Mule flow XMLs)
+      config_files   – list[dict] of {name, content}        (YAML/properties)
+      raml_files     – list[dict] of {name, content}        (RAML API defs)
+      java_files     – list[dict] of {name, content}        (custom Java)
+      dataweave_files – list[dict] of {name, content}       (DWL scripts)
+      global_xml_files – list[dict] of {name, content}      (resource XMLs)
+      pom_xml        – str | None                           (pom.xml content)
+      mule_artifact  – str | None                           (mule-artifact.json)
+      log4j2_xml     – str | None                           (log4j2.xml content)
+      project_root   – str, detected project root within the ZIP
+      pom_metadata   – dict with groupId, artifactId, version, connectors
+    """
+    import zipfile
+    import io
+    import fnmatch
+
+    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    all_names = zf.namelist()
+
+    # ── Detect project root (handle nested structures) ───────────────
+    # Look for pom.xml or src/main/mule/ to find the project root
+    project_root = ""
+    for name in all_names:
+        parts = name.split("/")
+        if any(p in _SKIP_NAMES for p in parts):
+            continue
+        if parts[-1] == "pom.xml":
+            project_root = "/".join(parts[:-1])
+            break
+    # Fallback: find src/main/mule
+    if not project_root:
+        for name in all_names:
+            parts = name.split("/")
+            if any(p in _SKIP_NAMES for p in parts):
+                continue
+            try:
+                idx = parts.index("src")
+                if parts[idx + 1] == "main" and parts[idx + 2] == "mule":
+                    project_root = "/".join(parts[:idx])
+                    break
+            except (ValueError, IndexError):
+                continue
+
+    prefix = (project_root + "/") if project_root else ""
+
+    # ── Helper: read a ZIP entry as UTF-8 text ───────────────────────
+    def _read_text(entry_name: str) -> str | None:
+        try:
+            raw = zf.read(entry_name)
+            return raw.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+
+    # ── Collect all important files ──────────────────────────────────
+    xml_files: list[dict] = []
+    config_files: list[dict] = []
+    raml_files: list[dict] = []
+    java_files: list[dict] = []
+    dataweave_files: list[dict] = []
+    global_xml_files: list[dict] = []
+    pom_xml: str | None = None
+    mule_artifact: str | None = None
+    log4j2_xml: str | None = None
+
+    mule_dir = f"{prefix}src/main/mule/"
+    resources_dir = f"{prefix}src/main/resources/"
+    java_dir = f"{prefix}src/main/java/"
+
+    for name in sorted(all_names):
+        # Skip directories and junk
+        if name.endswith("/"):
+            continue
+        parts = name.split("/")
+        if any(p in _SKIP_NAMES for p in parts):
+            continue
+
+        lower = name.lower()
+        rel_name = name[len(prefix):] if prefix else name
+        basename = parts[-1]
+        basename_lower = basename.lower()
+
+        # ── pom.xml ──────────────────────────────────────────────
+        if rel_name == "pom.xml":
+            pom_xml = _read_text(name)
+            continue
+
+        # ── mule-artifact.json ───────────────────────────────────
+        if rel_name == "mule-artifact.json":
+            mule_artifact = _read_text(name)
+            continue
+
+        # ── log4j2.xml ───────────────────────────────────────────
+        if rel_name == "src/main/resources/log4j2.xml":
+            log4j2_xml = _read_text(name)
+            continue
+
+        # ── Mule XML files in src/main/mule/ or project root ────
+        if lower.endswith(".xml"):
+            in_mule_dir = name.startswith(mule_dir)
+            at_root = (prefix and name.startswith(prefix) and "/" not in name[len(prefix):])
+            at_zip_root = (not prefix and "/" not in name)
+
+            if in_mule_dir or at_root or at_zip_root:
+                content = _read_text(name)
+                if content and _is_mule_xml(content):
+                    xml_files.append({
+                        "name": rel_name,
+                        "content": content,
+                        "size": len(content.encode("utf-8")),
+                    })
+                    continue
+
+            # ── Global XML configs in src/main/resources/ ────────
+            if name.startswith(resources_dir) and basename_lower != "log4j2.xml":
+                content = _read_text(name)
+                if content:
+                    global_xml_files.append({"name": rel_name, "content": content})
+                continue
+
+        # ── Config YAML / properties files ───────────────────────
+        if basename_lower in ("config.yaml", "config.yml", "config.properties",
+                              "application.yaml", "application.yml",
+                              "application.properties", "mule-app.properties"):
+            if name.startswith(resources_dir) or name.startswith(prefix):
+                content = _read_text(name)
+                if content:
+                    config_files.append({"name": rel_name, "content": content})
+            continue
+
+        # ── Properties files in resources (e.g. env-specific) ────
+        if lower.endswith(".properties") and name.startswith(resources_dir):
+            content = _read_text(name)
+            if content:
+                config_files.append({"name": rel_name, "content": content})
+            continue
+
+        # ── RAML files (anywhere in project) ─────────────────────
+        if lower.endswith(".raml"):
+            content = _read_text(name)
+            if content:
+                raml_files.append({"name": rel_name, "content": content})
+            continue
+
+        # ── DataWeave .dwl files ─────────────────────────────────
+        if lower.endswith(".dwl"):
+            content = _read_text(name)
+            if content:
+                dataweave_files.append({"name": rel_name, "content": content})
+            continue
+
+        # ── Java source files ────────────────────────────────────
+        if lower.endswith(".java") and name.startswith(java_dir):
+            content = _read_text(name)
+            if content:
+                java_files.append({"name": rel_name, "content": content})
+            continue
+
+    # ── Fallback: if no XMLs found in standard dirs, scan ALL xml files ──
+    if not xml_files:
+        for name in sorted(all_names):
+            if name.endswith("/"):
+                continue
+            parts = name.split("/")
+            if any(p in _SKIP_NAMES for p in parts):
+                continue
+            if not name.lower().endswith(".xml"):
+                continue
+            content = _read_text(name)
+            if content and _is_mule_xml(content):
+                rel_name = name[len(prefix):] if prefix else name
+                xml_files.append({
+                    "name": rel_name,
+                    "content": content,
+                    "size": len(content.encode("utf-8")),
+                })
+
+    # ── Extract metadata from pom.xml ────────────────────────────────
+    pom_metadata = _parse_pom_metadata(pom_xml) if pom_xml else {}
+
+    # ── Extract mule version from mule-artifact.json ─────────────────
+    mule_version = ""
+    if mule_artifact:
+        try:
+            artifact_data = json.loads(mule_artifact)
+            mule_version = artifact_data.get("minMuleVersion", "")
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+    return {
+        "xml_files": xml_files,
+        "config_files": config_files,
+        "raml_files": raml_files,
+        "java_files": java_files,
+        "dataweave_files": dataweave_files,
+        "global_xml_files": global_xml_files,
+        "pom_xml": pom_xml,
+        "mule_artifact": mule_artifact,
+        "log4j2_xml": log4j2_xml,
+        "project_root": project_root,
+        "pom_metadata": pom_metadata,
+        "mule_version": mule_version,
+    }
+
+
+def _parse_pom_metadata(pom_content: str) -> dict:
+    """
+    Extract groupId, artifactId, version, and MuleSoft connector dependencies
+    from a pom.xml string.
+    """
+    import re
+
+    metadata: dict = {}
+
+    # Extract top-level groupId, artifactId, version (not inside <parent> or <dependency>)
+    # We use a simple approach: find the first occurrence outside of nested blocks
+    # Remove comments first
+    clean = re.sub(r"<!--.*?-->", "", pom_content, flags=re.DOTALL)
+
+    # Try to find project-level groupId (not inside <parent> or <dependencies>)
+    # Strategy: find <groupId> that appears before any <dependencies> block
+    deps_start = clean.find("<dependencies>")
+    parent_start = clean.find("<parent>")
+    parent_end = clean.find("</parent>")
+    header = clean[:deps_start] if deps_start > 0 else clean[:2000]
+
+    # Remove <parent> block from header to avoid picking up parent groupId
+    if parent_start >= 0 and parent_end > parent_start:
+        header_clean = header[:parent_start] + header[parent_end + len("</parent>"):]
+    else:
+        header_clean = header
+
+    gid_match = re.search(r"<groupId>\s*([^<]+?)\s*</groupId>", header_clean)
+    aid_match = re.search(r"<artifactId>\s*([^<]+?)\s*</artifactId>", header_clean)
+    ver_match = re.search(r"<version>\s*([^<]+?)\s*</version>", header_clean)
+
+    # Fallback to parent groupId if project-level not found
+    if not gid_match and parent_start >= 0 and parent_end > parent_start:
+        parent_block = clean[parent_start:parent_end]
+        gid_match = re.search(r"<groupId>\s*([^<]+?)\s*</groupId>", parent_block)
+
+    metadata["group_id"] = gid_match.group(1).strip() if gid_match else ""
+    metadata["artifact_id"] = aid_match.group(1).strip() if aid_match else ""
+    metadata["version"] = ver_match.group(1).strip() if ver_match else ""
+
+    # ── Extract MuleSoft connector dependencies ──────────────────────
+    connectors: list[dict] = []
+    # Known MuleSoft connector groupId prefixes
+    mule_group_prefixes = (
+        "org.mule.connectors",
+        "org.mule.modules",
+        "com.mulesoft.connectors",
+        "com.mulesoft.modules",
+        "org.mule.tooling",
+    )
+    dep_pattern = re.compile(
+        r"<dependency>\s*"
+        r"<groupId>\s*([^<]+?)\s*</groupId>\s*"
+        r"<artifactId>\s*([^<]+?)\s*</artifactId>\s*"
+        r"(?:<version>\s*([^<]*?)\s*</version>)?",
+        re.DOTALL,
+    )
+    for m in dep_pattern.finditer(clean):
+        dep_gid = m.group(1).strip()
+        dep_aid = m.group(2).strip()
+        dep_ver = (m.group(3) or "").strip()
+        if any(dep_gid.startswith(p) for p in mule_group_prefixes):
+            connectors.append({
+                "groupId": dep_gid,
+                "artifactId": dep_aid,
+                "version": dep_ver,
+            })
+
+    metadata["connectors"] = connectors
+    return metadata
+
+
+@app.route(route="api/v2/migrations/upload", methods=["POST"])
+async def upload_migration_zip(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Accept a multipart/form-data upload containing a MuleSoft project ZIP.
+
+    Form fields:
+      file            – the ZIP file (required)
+      project_name    – optional, defaults to ZIP filename
+      group_id        – optional, defaults to "com.example"
+      java_version    – optional, defaults to "17"
+      ai_enhancement  – optional, defaults to "false"
+    """
+    from security import require_auth, validate_xml_files, check_rate_limit
+    import db as database
+
+    headers = _get_headers(req)
+
+    # Authenticate
+    try:
+        user = require_auth(headers)
+    except ValueError as exc:
+        return _error_response(str(exc), 401, "UNAUTHORIZED")
+
+    # Rate limit
+    allowed, rate_info = check_rate_limit(user.oid, max_requests=10, window_seconds=60)
+    if not allowed:
+        return _json_response(
+            {"error": "RATE_LIMITED", "detail": "Too many upload requests.", **rate_info},
+            status_code=429,
+            headers={"Retry-After": str(rate_info.get("reset_at", 60) - int(time.time()))},
+        )
+
+    # ── Read the uploaded file from the multipart body ────────────────
+    # Azure Functions exposes files via req.files for multipart uploads
+    uploaded_file = req.files.get("file")
+    if not uploaded_file:
+        return _error_response("No file provided. Send a ZIP file as the 'file' field in multipart form data.")
+
+    # Read raw bytes
+    zip_bytes = uploaded_file.read()
+    if not zip_bytes:
+        return _error_response("Uploaded file is empty.")
+
+    # Size check
+    if len(zip_bytes) > MAX_UPLOAD_SIZE:
+        return _json_response(
+            {"error": "PAYLOAD_TOO_LARGE", "detail": f"ZIP file exceeds {MAX_UPLOAD_SIZE // (1024*1024)}MB limit."},
+            status_code=413,
+        )
+
+    # Validate it is a real ZIP
+    import zipfile, io
+    if not zipfile.is_zipfile(io.BytesIO(zip_bytes)):
+        return _error_response("Uploaded file is not a valid ZIP archive.", 400, "INVALID_FILE")
+
+    # ── Extract MuleSoft files ────────────────────────────────────────
+    try:
+        extracted = _extract_mule_project_from_zip(zip_bytes)
+    except Exception as exc:
+        logger.exception("upload.extract_error")
+        return _error_response(f"Failed to extract ZIP: {exc}", 400, "EXTRACT_ERROR")
+
+    xml_files = extracted["xml_files"]
+    if not xml_files:
+        return _error_response(
+            "No MuleSoft XML files found in the ZIP. "
+            "Expected XML files with a <mule> root element in src/main/mule/ or at the project root.",
+            400,
+            "NO_XML_FOUND",
+        )
+
+    # Validate XML (XXE prevention)
+    try:
+        xml_files = validate_xml_files(xml_files)
+    except ValueError as exc:
+        return _error_response(str(exc))
+
+    # ── Read optional form fields ─────────────────────────────────────
+    zip_filename = uploaded_file.filename or "uploaded-project"
+    if zip_filename.lower().endswith(".zip"):
+        zip_filename = zip_filename[:-4]
+
+    form = req.form or {}
+    pom_meta = extracted.get("pom_metadata") or {}
+    # Prefer pom.xml metadata, then form fields, then defaults
+    project_name = (
+        form.get("project_name")
+        or pom_meta.get("artifact_id")
+        or zip_filename
+    )
+    group_id = (
+        form.get("group_id")
+        or pom_meta.get("group_id")
+        or "com.example"
+    )
+    java_version = form.get("java_version") or "17"
+    ai_enhancement_str = form.get("ai_enhancement", "false")
+    ai_enabled = ai_enhancement_str.lower() in ("true", "1", "yes")
+
+    # ── Build DataWeave scripts dict ─────────────────────────────────
+    dataweave_scripts = {
+        f["name"]: f["content"] for f in extracted.get("dataweave_files", [])
+    }
+
+    # ── Build config YAML content (first config.yaml found) ──────────
+    config_yaml_content = ""
+    for cf in extracted.get("config_files", []):
+        if cf["name"].lower().endswith((".yaml", ".yml")):
+            config_yaml_content = cf["content"]
+            break
+
+    # ── Build LLM config with all extra MuleSoft context ─────────────
+    llm_config = {
+        "provider": "azure_openai" if ai_enabled else "",
+        "model": "gpt-4.1" if ai_enabled else "",
+        "enabled": ai_enabled,
+        # Extra MuleSoft project context for the engine/LLM
+        "mule_config_yaml": config_yaml_content,
+        "mule_pom_xml": extracted.get("pom_xml") or "",
+        "mule_raml": {f["name"]: f["content"] for f in extracted.get("raml_files", [])},
+        "mule_java_files": {f["name"]: f["content"] for f in extracted.get("java_files", [])},
+        "mule_global_xml": {f["name"]: f["content"] for f in extracted.get("global_xml_files", [])},
+        "mule_log4j2": extracted.get("log4j2_xml") or "",
+        "mule_version": extracted.get("mule_version") or "",
+        "mule_artifact_json": extracted.get("mule_artifact") or "",
+        "pom_metadata": pom_meta,
+        "all_config_files": {f["name"]: f["content"] for f in extracted.get("config_files", [])},
+    }
+
+    # Upsert user
+    db_user = await database.upsert_user(user.oid, user.email, user.name)
+
+    # Create migration row
+    migration_data = {
+        "project_name": project_name,
+        "group_id": group_id,
+        "java_version": java_version,
+        "input_xml_files": xml_files,
+        "dataweave_scripts": dataweave_scripts,
+        "llm_config": llm_config,
+    }
+    migration = await database.create_migration(migration_data, user_id=db_user["id"])
+
+    # Enqueue for background processing
+    _enqueue_message("migration-queue", {
+        "migration_id": migration["id"],
+        "enqueued_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    # ── Build enhanced upload summary ────────────────────────────────
+    total_files = (
+        len(xml_files)
+        + len(extracted.get("config_files", []))
+        + len(extracted.get("raml_files", []))
+        + len(extracted.get("java_files", []))
+        + len(extracted.get("dataweave_files", []))
+        + len(extracted.get("global_xml_files", []))
+        + (1 if extracted.get("pom_xml") else 0)
+        + (1 if extracted.get("log4j2_xml") else 0)
+        + (1 if extracted.get("mule_artifact") else 0)
+    )
+
+    upload_summary = {
+        "xml_files": [f["name"] for f in xml_files],
+        "config_files": [f["name"] for f in extracted.get("config_files", [])],
+        "raml_files": [f["name"] for f in extracted.get("raml_files", [])],
+        "java_files": [f["name"] for f in extracted.get("java_files", [])],
+        "dataweave_files": [f["name"] for f in extracted.get("dataweave_files", [])],
+        "global_xml_files": [f["name"] for f in extracted.get("global_xml_files", [])],
+        "log4j2": bool(extracted.get("log4j2_xml")),
+        "pom_detected": bool(extracted.get("pom_xml")),
+        "mule_artifact_detected": bool(extracted.get("mule_artifact")),
+        "project_name": project_name,
+        "group_id": group_id,
+        "mule_version": extracted.get("mule_version") or "",
+        "pom_connectors": pom_meta.get("connectors", []),
+        "project_root": extracted["project_root"],
+        "total_files": total_files,
+    }
+
+    logger.info(
+        "migration.uploaded: id=%s project=%s xml=%d config=%d raml=%d java=%d dwl=%d total=%d",
+        migration["id"], project_name,
+        len(xml_files), len(extracted.get("config_files", [])),
+        len(extracted.get("raml_files", [])), len(extracted.get("java_files", [])),
+        len(extracted.get("dataweave_files", [])), total_files,
+    )
+
+    return _json_response({
+        **migration,
+        "upload_summary": upload_summary,
+    }, status_code=202)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

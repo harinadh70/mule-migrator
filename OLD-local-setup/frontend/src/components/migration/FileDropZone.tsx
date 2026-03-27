@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef } from "react";
-import { Upload, FileCode2, X, Folder, FolderOpen } from "lucide-react";
+import { Upload, FileCode2, X, FolderOpen, Archive, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { uploadMigrationZip } from "@/api/migrations";
+import type { UploadSummary } from "@/api/migrations";
 
 interface UploadedFile {
   name: string;
@@ -11,6 +13,12 @@ interface UploadedFile {
 interface FileDropZoneProps {
   onFilesLoaded: (xml: string, files: UploadedFile[]) => void;
   files: UploadedFile[];
+  /** Called when a ZIP upload completes and a migration is created server-side */
+  onZipMigrationCreated?: (migrationId: string, summary: UploadSummary) => void;
+  /** Settings for ZIP upload */
+  groupId?: string;
+  javaVersion?: string;
+  aiEnhancement?: boolean;
 }
 
 // File extensions to pick up from a MuleSoft project folder
@@ -69,7 +77,7 @@ async function traverseDirectory(
     const subPath = basePath ? `${basePath}/${entry.name}` : entry.name;
     for (const child of children) {
       // Skip common non-source directories
-      if (child.name === "target" || child.name === "node_modules" || child.name === ".git" || child.name === ".mule") {
+      if (child.name === "target" || child.name === "node_modules" || child.name === ".git" || child.name === ".mule" || child.name === "__MACOSX") {
         continue;
       }
       const childResults = await traverseDirectory(child, subPath);
@@ -79,11 +87,76 @@ async function traverseDirectory(
   return results;
 }
 
-export default function FileDropZone({ onFilesLoaded, files }: FileDropZoneProps) {
+export default function FileDropZone({
+  onFilesLoaded,
+  files,
+  onZipMigrationCreated,
+  groupId,
+  javaVersion,
+  aiEnhancement,
+}: FileDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
+
+  // ZIP upload state
+  const [zipUploadProgress, setZipUploadProgress] = useState(0);
+  const [zipUploadStatus, setZipUploadStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
+  const [zipUploadMessage, setZipUploadMessage] = useState("");
+  const [zipSummary, setZipSummary] = useState<UploadSummary | null>(null);
+
+  // Handle ZIP file upload to backend
+  const handleZipUpload = useCallback(
+    async (file: File) => {
+      // Validate size client-side (50MB)
+      if (file.size > 50 * 1024 * 1024) {
+        setZipUploadStatus("error");
+        setZipUploadMessage("ZIP file exceeds 50MB limit.");
+        return;
+      }
+
+      setZipUploadStatus("uploading");
+      setZipUploadProgress(0);
+      setZipUploadMessage(`Uploading ${file.name}...`);
+      setZipSummary(null);
+
+      try {
+        const result = await uploadMigrationZip(
+          file,
+          undefined, // project_name defaults to filename
+          groupId,
+          javaVersion,
+          aiEnhancement,
+          (progress) => setZipUploadProgress(progress)
+        );
+
+        const summary = result.upload_summary;
+        if (summary) {
+          setZipSummary(summary);
+          setZipUploadMessage(
+            `Found ${summary.xml_files_found} XML file${summary.xml_files_found !== 1 ? "s" : ""}` +
+            (summary.config_files_found > 0 ? ` and ${summary.config_files_found} config file${summary.config_files_found !== 1 ? "s" : ""}` : "") +
+            ` in project`
+          );
+        }
+
+        setZipUploadStatus("success");
+        setZipUploadProgress(100);
+
+        if (onZipMigrationCreated && summary) {
+          onZipMigrationCreated(result.id, summary);
+        }
+      } catch (err: any) {
+        setZipUploadStatus("error");
+        const detail = err?.response?.data?.detail || err?.message || "Upload failed";
+        setZipUploadMessage(detail);
+        setZipUploadProgress(0);
+      }
+    },
+    [groupId, javaVersion, aiEnhancement, onZipMigrationCreated]
+  );
 
   const processFiles = useCallback(
     async (newEntries: { file: File; path: string }[]) => {
@@ -128,8 +201,20 @@ export default function FileDropZone({ onFilesLoaded, files }: FileDropZoneProps
       e.preventDefault();
       e.stopPropagation();
       setIsDragging(false);
-      setIsProcessing(true);
 
+      // Check if any dropped file is a ZIP
+      const droppedFiles = Array.from(e.dataTransfer.files);
+      const zipFile = droppedFiles.find(
+        (f) => f.name.toLowerCase().endsWith(".zip") || f.type === "application/zip"
+      );
+
+      if (zipFile) {
+        await handleZipUpload(zipFile);
+        return;
+      }
+
+      // Otherwise handle as folder / individual files
+      setIsProcessing(true);
       try {
         const items = e.dataTransfer.items;
         const allEntries: { file: File; path: string }[] = [];
@@ -145,7 +230,7 @@ export default function FileDropZone({ onFilesLoaded, files }: FileDropZoneProps
 
         // Fallback to regular files if no entries found
         if (allEntries.length === 0 && e.dataTransfer.files.length > 0) {
-          for (const file of Array.from(e.dataTransfer.files)) {
+          for (const file of droppedFiles) {
             if (isSupported(file.name)) {
               allEntries.push({ file, path: file.name });
             }
@@ -157,7 +242,7 @@ export default function FileDropZone({ onFilesLoaded, files }: FileDropZoneProps
         setIsProcessing(false);
       }
     },
-    [processFiles]
+    [processFiles, handleZipUpload]
   );
 
   const handleFileInput = useCallback(
@@ -182,6 +267,16 @@ export default function FileDropZone({ onFilesLoaded, files }: FileDropZoneProps
     [processFiles]
   );
 
+  const handleZipInput = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!e.target.files || e.target.files.length === 0) return;
+      const file = e.target.files[0];
+      await handleZipUpload(file);
+      e.target.value = "";
+    },
+    [handleZipUpload]
+  );
+
   const removeFile = useCallback(
     (path: string) => {
       const remaining = files.filter((f) => f.path !== path);
@@ -193,6 +288,10 @@ export default function FileDropZone({ onFilesLoaded, files }: FileDropZoneProps
 
   const clearAll = useCallback(() => {
     onFilesLoaded("", []);
+    setZipUploadStatus("idle");
+    setZipUploadProgress(0);
+    setZipUploadMessage("");
+    setZipSummary(null);
   }, [onFilesLoaded]);
 
   function formatSize(bytes: number): string {
@@ -223,6 +322,21 @@ export default function FileDropZone({ onFilesLoaded, files }: FileDropZoneProps
             <div className="h-8 w-8 border-2 border-[#0070AD] border-t-transparent rounded-full animate-spin" />
             <p className="text-sm text-[#0070AD] font-medium">Reading files...</p>
           </div>
+        ) : zipUploadStatus === "uploading" ? (
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 className="h-8 w-8 text-[#0070AD] animate-spin" />
+            <p className="text-sm text-[#0070AD] font-medium">{zipUploadMessage}</p>
+            {/* Progress bar */}
+            <div className="w-full max-w-xs mx-auto">
+              <div className="h-2 rounded-full bg-gray-200 dark:bg-white/[0.08] overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-[#0070AD] to-[#1B365D] transition-all duration-300 ease-out"
+                  style={{ width: `${zipUploadProgress}%` }}
+                />
+              </div>
+              <p className="text-xs text-capText-light dark:text-gray-500 mt-1">{zipUploadProgress}%</p>
+            </div>
+          </div>
         ) : (
           <>
             <Upload
@@ -231,16 +345,24 @@ export default function FileDropZone({ onFilesLoaded, files }: FileDropZoneProps
               }`}
             />
             <p className="text-sm font-medium text-capText dark:text-white">
-              {isDragging ? "Drop files or folder here" : "Drag & drop MuleSoft project folder or files"}
+              {isDragging ? "Drop files or folder here" : "Drag & drop MuleSoft project"}
             </p>
             <p className="text-xs text-capText-light dark:text-gray-500 mt-1">
-              Supports entire folders • .xml, .raml, .yaml, .dwl, .properties, .json
+              ZIP archives, project folders, or individual XML files
             </p>
             <div className="flex items-center justify-center gap-3 mt-3">
               <button
                 type="button"
-                onClick={() => folderInputRef.current?.click()}
+                onClick={() => zipInputRef.current?.click()}
                 className="px-3 py-1.5 text-xs font-medium rounded-md bg-[#0070AD] text-white hover:bg-[#005A8A] transition-colors flex items-center gap-1.5"
+              >
+                <Archive className="h-3.5 w-3.5" />
+                Upload ZIP
+              </button>
+              <button
+                type="button"
+                onClick={() => folderInputRef.current?.click()}
+                className="px-3 py-1.5 text-xs font-medium rounded-md border border-[#0070AD]/30 dark:border-white/[0.15] text-[#0070AD] dark:text-gray-300 hover:bg-[#0070AD]/5 dark:hover:bg-white/[0.03] transition-colors flex items-center gap-1.5"
               >
                 <FolderOpen className="h-3.5 w-3.5" />
                 Upload Folder
@@ -277,9 +399,71 @@ export default function FileDropZone({ onFilesLoaded, files }: FileDropZoneProps
           onChange={handleFileInput}
           className="hidden"
         />
+        <input
+          ref={zipInputRef}
+          type="file"
+          accept=".zip,application/zip"
+          onChange={handleZipInput}
+          className="hidden"
+        />
       </div>
 
-      {/* File List */}
+      {/* ZIP Upload Status Banner */}
+      {zipUploadStatus === "success" && zipSummary && (
+        <div className="flex items-start gap-3 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/30">
+          <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
+              {zipUploadMessage}
+            </p>
+            {zipSummary.xml_file_names.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {zipSummary.xml_file_names.map((name) => (
+                  <div key={name} className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400">
+                    <FileCode2 className="h-3 w-3 flex-shrink-0" />
+                    <span className="truncate font-mono">{name}</span>
+                  </div>
+                ))}
+                {zipSummary.config_file_names.map((name) => (
+                  <div key={name} className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-500">
+                    <FileCode2 className="h-3 w-3 flex-shrink-0 opacity-60" />
+                    <span className="truncate font-mono opacity-75">{name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {zipSummary.project_root && (
+              <p className="text-xs text-emerald-600 dark:text-emerald-500 mt-1.5">
+                Project root: <span className="font-mono">{zipSummary.project_root || "/"}</span>
+              </p>
+            )}
+          </div>
+          <button
+            onClick={clearAll}
+            className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/30 text-emerald-500 transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {zipUploadStatus === "error" && (
+        <div className="flex items-start gap-3 p-3 rounded-lg bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/30">
+          <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-red-800 dark:text-red-300">Upload Failed</p>
+            <p className="text-xs text-red-600 dark:text-red-400 mt-0.5">{zipUploadMessage}</p>
+          </div>
+          <button
+            onClick={() => { setZipUploadStatus("idle"); setZipUploadMessage(""); }}
+            className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* File List (for individual / folder uploads) */}
       {files.length > 0 && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">

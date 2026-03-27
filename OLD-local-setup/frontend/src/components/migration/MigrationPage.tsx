@@ -37,6 +37,7 @@ import { useSettingsStore } from "@/store/settings";
 import { showToast } from "@/components/layout/Layout";
 import type { MigrationFile, MuleSourceType, TargetFramework } from "@/types/migration";
 import type { AgentType } from "@/types/agent";
+import type { UploadSummary } from "@/api/migrations";
 
 export default function MigrationPage() {
   const { id } = useParams<{ id: string }>();
@@ -212,6 +213,19 @@ export default function MigrationPage() {
   function handleAgentClick(agentType: AgentType) {
     // No-op for now since we removed the pipeline tab
   }
+
+  // Handle ZIP upload completing (migration created server-side)
+  const handleZipMigrationCreated = useCallback(
+    (migrationId: string, _summary: UploadSummary) => {
+      showToast({
+        type: "success",
+        title: "Migration started from ZIP",
+        message: `Found ${_summary.xml_files_found} XML file(s). Migration is now running.`,
+      });
+      navigate(`/migrate/${migrationId}`);
+    },
+    [navigate]
+  );
 
   const isViewMode = !!id && !!migration;
   const isRunning = migration?.status === "running" || migration?.status === "pending" || migration?.status === "queued";
@@ -392,6 +406,10 @@ export default function MigrationPage() {
                   setSourceXml(xml);
                   setUploadedFiles(files);
                 }}
+                onZipMigrationCreated={handleZipMigrationCreated}
+                groupId={groupId || settings.defaultGroupId}
+                javaVersion={settings.defaultJavaVersion}
+                aiEnhancement={aiEnhancement}
               />
             ) : (
               <XmlEditor value={sourceXml} onChange={setSourceXml} />

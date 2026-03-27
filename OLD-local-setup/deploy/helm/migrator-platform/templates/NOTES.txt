@@ -1,0 +1,47 @@
+====================================================================
+  MuleSoft-to-SpringBoot Migrator Platform  v{{ .Chart.AppVersion }}
+====================================================================
+
+Your release "{{ .Release.Name }}" has been installed in namespace "{{ .Release.Namespace }}".
+
+{{- if .Values.ingress.enabled }}
+
+1. Access the application:
+{{- range .Values.ingress.hosts }}
+   https://{{ .host }}
+{{- end }}
+
+{{- else }}
+
+1. Access the API via port-forward:
+
+   kubectl port-forward svc/{{ include "migrator-platform.fullname" . }}-api {{ .Values.api.port }}:{{ .Values.api.port }} -n {{ .Release.Namespace }}
+
+   Then open: http://localhost:{{ .Values.api.port }}
+
+{{- end }}
+
+2. Check pod status:
+
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+3. View API logs:
+
+   kubectl logs -f deployment/{{ include "migrator-platform.fullname" . }}-api -n {{ .Release.Namespace }}
+
+4. Run the Helm test to verify connectivity:
+
+   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+5. Health check endpoint:
+
+   curl https://{{ (index .Values.ingress.hosts 0).host }}/health
+
+{{- if .Values.reindexCronJob.enabled }}
+
+6. RAG re-indexing runs on schedule: {{ .Values.reindexCronJob.schedule }}
+   Trigger manually:
+   kubectl create job --from=cronjob/{{ include "migrator-platform.fullname" . }}-reindex manual-reindex -n {{ .Release.Namespace }}
+{{- end }}
+
+====================================================================

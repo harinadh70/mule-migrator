@@ -1,0 +1,352 @@
+{
+  "info": {
+    "name": "Mule Migrator - Agentic AI Platform",
+    "description": "Complete API collection for the MuleSoft to Spring Boot Agentic AI Migration Platform.\n\nBase URL: https://mulesoft-migrator-prod-func-hwddm9.azurewebsites.net/api\nFrontend: https://nice-rock-0f9182f00.6.azurestaticapps.net",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://mulesoft-migrator-prod-func-hwddm9.azurewebsites.net/api"
+    },
+    {
+      "key": "frontend_url",
+      "value": "https://nice-rock-0f9182f00.6.azurestaticapps.net"
+    },
+    {
+      "key": "migration_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "🏥 Health & Status",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/health",
+            "description": "Check API health, database connectivity, and service status."
+          }
+        },
+        {
+          "name": "Auth Status (Who am I)",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/.auth/me",
+            "description": "Returns the currently authenticated user's Azure AD claims."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🚀 Migrations",
+      "description": "Core migration endpoints — create, list, get, cancel, delete migrations.",
+      "item": [
+        {
+          "name": "Create Migration (Simple XML)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v2/migrations",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_name\": \"my-spring-app\",\n  \"group_id\": \"com.example\",\n  \"java_version\": \"17\",\n  \"llm_config\": {\n    \"provider\": \"azure_openai\",\n    \"model\": \"gpt-4.1\",\n    \"enabled\": false\n  },\n  \"input_xml_files\": [\n    {\n      \"name\": \"api.xml\",\n      \"content\": \"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?>\\n<mule xmlns=\\\"http://www.mulesoft.org/schema/mule/core\\\" xmlns:http=\\\"http://www.mulesoft.org/schema/mule/http\\\">\\n  <http:listener-config name=\\\"HTTP\\\">\\n    <http:listener-connection host=\\\"0.0.0.0\\\" port=\\\"8081\\\"/>\\n  </http:listener-config>\\n  <flow name=\\\"helloFlow\\\">\\n    <http:listener config-ref=\\\"HTTP\\\" path=\\\"/hello\\\"/>\\n    <set-payload value=\\\"Hello World\\\"/>\\n  </flow>\\n</mule>\",\n      \"size\": 400\n    }\n  ]\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "description": "Create a new migration job. Returns 200 with migration ID. The migration is queued for async processing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.id) { pm.collectionVariables.set('migration_id', json.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Migration (Complex - DB + DataWeave + AI)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v2/migrations",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_name\": \"user-service\",\n  \"group_id\": \"com.example\",\n  \"java_version\": \"17\",\n  \"llm_config\": {\n    \"provider\": \"azure_openai\",\n    \"model\": \"gpt-4.1\",\n    \"enabled\": true\n  },\n  \"input_xml_files\": [\n    {\n      \"name\": \"user-api.xml\",\n      \"content\": \"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?>\\n<mule xmlns=\\\"http://www.mulesoft.org/schema/mule/core\\\"\\n      xmlns:http=\\\"http://www.mulesoft.org/schema/mule/http\\\"\\n      xmlns:db=\\\"http://www.mulesoft.org/schema/mule/db\\\"\\n      xmlns:ee=\\\"http://www.mulesoft.org/schema/mule/ee/core\\\">\\n  <http:listener-config name=\\\"HTTP\\\">\\n    <http:listener-connection host=\\\"0.0.0.0\\\" port=\\\"8081\\\"/>\\n  </http:listener-config>\\n  <db:config name=\\\"Database_Config\\\">\\n    <db:my-sql-connection host=\\\"localhost\\\" port=\\\"3306\\\" database=\\\"mydb\\\" user=\\\"root\\\" password=\\\"pass\\\"/>\\n  </db:config>\\n  <flow name=\\\"getUsersFlow\\\">\\n    <http:listener config-ref=\\\"HTTP\\\" path=\\\"/api/users\\\" allowedMethods=\\\"GET\\\"/>\\n    <db:select config-ref=\\\"Database_Config\\\">\\n      <db:sql>SELECT * FROM users</db:sql>\\n    </db:select>\\n    <ee:transform>\\n      <ee:message>\\n        <ee:set-payload><![CDATA[%dw 2.0\\noutput application/json\\n---\\npayload map {\\n    id: $.id,\\n    name: $.name,\\n    email: $.email\\n}]]></ee:set-payload>\\n      </ee:message>\\n    </ee:transform>\\n  </flow>\\n  <flow name=\\\"createUserFlow\\\">\\n    <http:listener config-ref=\\\"HTTP\\\" path=\\\"/api/users\\\" allowedMethods=\\\"POST\\\"/>\\n    <logger level=\\\"INFO\\\" message=\\\"Creating new user\\\"/>\\n    <db:insert config-ref=\\\"Database_Config\\\">\\n      <db:sql>INSERT INTO users (name, email) VALUES (:name, :email)</db:sql>\\n    </db:insert>\\n    <set-payload value=\\\"{&quot;status&quot;: &quot;created&quot;}\\\" mimeType=\\\"application/json\\\"/>\\n  </flow>\\n</mule>\",\n      \"size\": 1200\n    }\n  ]\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "description": "Create a complex migration with DB connectors, DataWeave transforms, and AI enhancement enabled (GPT-4.1)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.id) { pm.collectionVariables.set('migration_id', json.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Migrations (paginated)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations?page=1&size=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "size", "value": "20"},
+                {"key": "status", "value": "", "disabled": true}
+              ]
+            },
+            "description": "List all migrations with pagination. Optional status filter: queued, running, completed, failed, cancelled."
+          }
+        },
+        {
+          "name": "Get Migration Detail",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v2/migrations/{{migration_id}}",
+            "description": "Get full migration details including output_files, agent_trace, summary, tokens used, and cost."
+          }
+        },
+        {
+          "name": "Get Migration Files",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v2/migrations/{{migration_id}}/files",
+            "description": "Get all generated Spring Boot files with content. Returns {files: {filepath: content}}."
+          }
+        },
+        {
+          "name": "Cancel Migration",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v2/migrations/{{migration_id}}/cancel",
+            "description": "Cancel a running or queued migration."
+          }
+        },
+        {
+          "name": "Delete Migration (soft)",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/api/v2/migrations/{{migration_id}}",
+            "description": "Soft-delete a migration. Sets deleted_at timestamp, does not remove data."
+          }
+        },
+        {
+          "name": "Migration Stats",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v2/stats/migrations",
+            "description": "Aggregate statistics: total migrations, by status, avg duration, total tokens, total cost."
+          }
+        }
+      ]
+    },
+    {
+      "name": "📚 RAG Knowledge Base",
+      "description": "Retrieval-Augmented Generation endpoints — manage knowledge collections and search.",
+      "item": [
+        {
+          "name": "List Collections",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v2/rag/collections",
+            "description": "List all RAG knowledge base collections with document counts. Collections: mulesoft, dataweave, connector, best-practice."
+          }
+        },
+        {
+          "name": "List Documents (all)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v2/rag/documents",
+            "description": "List all 31 knowledge documents with title, content preview, and category."
+          }
+        },
+        {
+          "name": "List Documents (by category)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v2/rag/documents?category=dataweave",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "rag", "documents"],
+              "query": [
+                {"key": "category", "value": "dataweave", "description": "Options: mulesoft, dataweave, connector, best-practice"}
+              ]
+            },
+            "description": "Filter documents by category."
+          }
+        },
+        {
+          "name": "Semantic Search",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v2/rag/search",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"How to convert HTTP listener to Spring Boot controller\",\n  \"top_k\": 5\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "description": "Semantic vector search across the knowledge base using Azure OpenAI embeddings."
+          }
+        },
+        {
+          "name": "Seed Knowledge Base",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v2/rag/seed",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clear_existing\": false\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "description": "Seed/re-seed the RAG knowledge base with 31 MuleSoft→Spring Boot migration patterns. Set clear_existing=true to wipe and re-index."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🐙 GitHub",
+      "description": "Push generated Spring Boot code to GitHub repositories.",
+      "item": [
+        {
+          "name": "Push to GitHub",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v2/github/push",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"migration_id\": \"{{migration_id}}\",\n  \"repo_name\": \"owner/repo-name\",\n  \"branch\": \"main\",\n  \"commit_message\": \"feat: migrate MuleSoft to Spring Boot\",\n  \"github_token\": \"ghp_your_personal_access_token\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "description": "Push all generated files from a completed migration to a GitHub repository. Requires a GitHub PAT with repo scope."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🔐 Authentication",
+      "description": "Azure AD authentication endpoints (handled by Azure Static Web App).",
+      "item": [
+        {
+          "name": "Login (Azure AD)",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/.auth/login/aad",
+            "description": "Redirect to Microsoft login page. After authentication, redirects back to the app with an auth cookie."
+          }
+        },
+        {
+          "name": "Current User (Who am I)",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/.auth/me",
+            "description": "Returns the authenticated user's Azure AD claims: name, email, roles, tenant ID."
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/.auth/logout",
+            "description": "Logs out the current user and clears the auth cookie."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🌐 Frontend Pages",
+      "description": "React frontend pages hosted on Azure Static Web App.",
+      "item": [
+        {
+          "name": "Dashboard",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/dashboard",
+            "description": "Main dashboard with migration stats, recent migrations, and quick actions."
+          }
+        },
+        {
+          "name": "New Migration",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/migrate",
+            "description": "Create a new migration — drag & drop XML files or paste XML, configure options, start migration."
+          }
+        },
+        {
+          "name": "Migration Detail",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/migrate/{{migration_id}}",
+            "description": "View migration detail — Agent Live Feed (left), File Explorer + Code Editor (right)."
+          }
+        },
+        {
+          "name": "Migration History",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/history",
+            "description": "Paginated list of all past migrations with status filter."
+          }
+        },
+        {
+          "name": "Knowledge Base",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/knowledge",
+            "description": "RAG Knowledge Base — 4 collections (mulesoft, dataweave, connector, best-practice) with 31 documents."
+          }
+        },
+        {
+          "name": "GitHub Push",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/github",
+            "description": "Push generated Spring Boot code to GitHub repositories."
+          }
+        },
+        {
+          "name": "Swagger/OpenAPI",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/swagger",
+            "description": "View generated OpenAPI spec for migrated APIs."
+          }
+        },
+        {
+          "name": "Settings",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/settings",
+            "description": "Platform settings — AI Engine status, theme, project defaults, security info."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,295 @@
+# =================================================================
+#  MuleSoft-to-SpringBoot Migrator Platform — Default Helm Values
+# =================================================================
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ── Global ────────────────────────────────────────────────────────
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# ── Application Image ────────────────────────────────────────────
+image:
+  registry: ghcr.io
+  repository: your-org/mulesoft-to-springboot-migrator
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# ── Service Account ──────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ── General Config ───────────────────────────────────────────────
+config:
+  environment: production
+  logLevel: info
+  corsOrigins: "https://yourdomain.com"
+  secretKey: ""  # Generated at install if empty
+  debug: false
+
+# ── Feature Flags ────────────────────────────────────────────────
+featureFlags:
+  agentsEnabled: true
+  ragEnabled: true
+
+# ── LLM Configuration ───────────────────────────────────────────
+llm:
+  defaultProvider: anthropic
+  defaultModel: claude-sonnet-4-20250514
+  maxTokens: 8192
+  temperature: "0.1"
+  requestTimeout: "120.0"
+
+# ── RAG Configuration ───────────────────────────────────────────
+rag:
+  embeddingModel: all-MiniLM-L6-v2
+  embeddingDimension: 384
+  chunkSize: 512
+  chunkOverlap: 64
+  topK: 5
+  scoreThreshold: "0.65"
+
+# ── Security ─────────────────────────────────────────────────────
+security:
+  jwtAlgorithm: HS256
+  accessTokenExpireMinutes: 60
+  refreshTokenExpireDays: 7
+  rateLimitPerMinute: 60
+  trustedHosts: "*"
+
+# ── Secrets (base64 encoded at render time) ──────────────────────
+secrets:
+  anthropicApiKey: ""
+  openaiApiKey: ""
+  googleApiKey: ""
+  deepseekApiKey: ""
+  groqApiKey: ""
+  postgresPassword: "migrator_secret"
+  secretKey: ""
+  jwtPrivateKey: ""
+  jwtPublicKey: ""
+  githubClientId: ""
+  githubClientSecret: ""
+  apiKeyFernetKey: ""
+  qdrantApiKey: ""
+
+# ── API Deployment ───────────────────────────────────────────────
+api:
+  replicaCount: 2
+  uvicornWorkers: 4
+  port: 8000
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# ── Celery Workers ───────────────────────────────────────────────
+celery:
+  migration:
+    replicaCount: 1
+    concurrency: 2
+    maxTasksPerChild: 50
+    queue: migration
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 75
+
+  build:
+    replicaCount: 1
+    concurrency: 2
+    maxTasksPerChild: 100
+    queue: build
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1.5"
+        memory: 2Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 75
+
+  indexing:
+    replicaCount: 1
+    concurrency: 1
+    maxTasksPerChild: 20
+    queue: indexing
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+  beat:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
+# ── Database Migration (init container) ──────────────────────────
+migration:
+  enabled: true
+  command: ["alembic", "upgrade", "head"]
+
+# ── Qdrant ───────────────────────────────────────────────────────
+qdrant:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: qdrant/qdrant
+    tag: latest
+    pullPolicy: IfNotPresent
+  port: 6333
+  grpcPort: 6334
+  collection: mulesoft_knowledge
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+# ── PostgreSQL (Bitnami subchart) ────────────────────────────────
+postgresql:
+  enabled: true
+  auth:
+    username: migrator
+    password: ""  # Set via secrets
+    database: migrator
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+
+# ── Redis (Bitnami subchart) ────────────────────────────────────
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    configuration: |
+      maxmemory 512mb
+      maxmemory-policy allkeys-lru
+      appendonly yes
+      appendfsync everysec
+
+# ── Ingress ──────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/websocket-services: "{{ include \"migrator-platform.fullname\" . }}-api"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+  hosts:
+    - host: migrator.yourdomain.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: migrator-tls
+      hosts:
+        - migrator.yourdomain.com
+
+# ── Network Policy ───────────────────────────────────────────────
+networkPolicy:
+  enabled: true
+
+# ── Reindex CronJob ──────────────────────────────────────────────
+reindexCronJob:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi

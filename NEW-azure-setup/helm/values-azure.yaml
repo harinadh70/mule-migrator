@@ -1,0 +1,383 @@
+# =================================================================
+#  MuleSoft-to-SpringBoot Migrator Platform — Azure Override Values
+#
+#  Usage:
+#    helm upgrade --install migrator ./migrator-platform \
+#      -f values.yaml -f values-azure.yaml \
+#      --namespace migrator --create-namespace
+# =================================================================
+
+# ── Application Image (Azure Container Registry) ────────────────
+image:
+  registry: "acrmigratorproduction.azurecr.io"
+  repository: migrator-api
+  tag: "latest"
+  pullPolicy: Always
+
+# ── General Config ───────────────────────────────────────────────
+config:
+  environment: production
+  logLevel: info
+  corsOrigins: "https://migrator.yourdomain.com"
+  debug: false
+
+# ── Feature Flags ────────────────────────────────────────────────
+featureFlags:
+  agentsEnabled: true
+  ragEnabled: true
+  enableAzureAd: true
+  enableAzureOpenai: true
+
+# ── LLM Configuration (Azure OpenAI) ────────────────────────────
+llm:
+  defaultProvider: azure_openai
+  defaultModel: gpt-4o
+  maxTokens: 8192
+  temperature: "0.1"
+  requestTimeout: "120.0"
+
+azureOpenai:
+  endpoint: "https://<resource-name>.openai.azure.com/"
+  apiVersion: "2024-02-01"
+  chatDeployment: gpt-4o
+  embeddingDeployment: text-embedding-3-small
+
+# ── RAG Configuration ───────────────────────────────────────────
+rag:
+  embeddingModel: text-embedding-3-small
+  embeddingDimension: 1536
+  chunkSize: 512
+  chunkOverlap: 64
+  topK: 5
+  scoreThreshold: "0.65"
+
+# ── Security ─────────────────────────────────────────────────────
+security:
+  jwtAlgorithm: RS256
+  accessTokenExpireMinutes: 60
+  refreshTokenExpireDays: 7
+  rateLimitPerMinute: 60
+  trustedHosts: "migrator.yourdomain.com"
+
+# ── Azure AD Authentication ─────────────────────────────────────
+azureAd:
+  tenantId: "<tenant-id>"
+  clientId: "<client-id>"
+
+# ── Azure Key Vault CSI Driver ──────────────────────────────────
+keyVault:
+  enabled: true
+  uri: "https://<vault-name>.vault.azure.net/"
+  tenantId: "<tenant-id>"
+  # SecretProviderClass mounts Key Vault secrets as files/env vars
+  secretProviderClass:
+    create: true
+    name: migrator-kv-secrets
+    objects: |
+      array:
+        - |
+          objectName: anthropic-api-key
+          objectType: secret
+          objectAlias: ANTHROPIC_API_KEY
+        - |
+          objectName: openai-api-key
+          objectType: secret
+          objectAlias: OPENAI_API_KEY
+        - |
+          objectName: azure-openai-key
+          objectType: secret
+          objectAlias: AZURE_OPENAI_KEY
+        - |
+          objectName: postgres-password
+          objectType: secret
+          objectAlias: POSTGRES_PASSWORD
+        - |
+          objectName: redis-password
+          objectType: secret
+          objectAlias: REDIS_PASSWORD
+        - |
+          objectName: jwt-private-key
+          objectType: secret
+          objectAlias: JWT_PRIVATE_KEY
+        - |
+          objectName: jwt-public-key
+          objectType: secret
+          objectAlias: JWT_PUBLIC_KEY
+        - |
+          objectName: azure-ad-client-secret
+          objectType: secret
+          objectAlias: AZURE_AD_CLIENT_SECRET
+        - |
+          objectName: secret-key
+          objectType: secret
+          objectAlias: SECRET_KEY
+        - |
+          objectName: api-key-fernet-key
+          objectType: secret
+          objectAlias: API_KEY_FERNET_KEY
+
+# ── Azure Application Insights ──────────────────────────────────
+monitoring:
+  applicationInsights:
+    enabled: true
+    connectionString: ""  # Set via Key Vault or --set
+    # Auto-instrumentation via OpenCensus / OpenTelemetry
+    samplingPercentage: 100
+    logLevel: WARNING
+
+# ── Secrets (base64 encoded — prefer Key Vault CSI in production)
+secrets:
+  anthropicApiKey: ""
+  openaiApiKey: ""
+  googleApiKey: ""
+  deepseekApiKey: ""
+  groqApiKey: ""
+  postgresPassword: ""
+  secretKey: ""
+  jwtPrivateKey: ""
+  jwtPublicKey: ""
+  githubClientId: ""
+  githubClientSecret: ""
+  apiKeyFernetKey: ""
+  qdrantApiKey: ""
+  azureOpenaiKey: ""
+  azureAdClientSecret: ""
+
+# ── API Deployment ───────────────────────────────────────────────
+api:
+  replicaCount: 3
+  uvicornWorkers: 4
+  port: 8000
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  tolerations: []
+
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - api
+            topologyKey: topology.kubernetes.io/zone
+
+  # Extra environment variables injected via Key Vault CSI
+  extraEnvFrom:
+    - secretRef:
+        name: migrator-kv-synced-secrets
+
+  # Extra volume mounts for Key Vault CSI
+  extraVolumeMounts:
+    - name: secrets-store
+      mountPath: "/mnt/secrets-store"
+      readOnly: true
+
+  extraVolumes:
+    - name: secrets-store
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+        volumeAttributes:
+          secretProviderClass: migrator-kv-secrets
+
+# ── Celery Workers ───────────────────────────────────────────────
+celery:
+  migration:
+    replicaCount: 2
+    concurrency: 2
+    maxTasksPerChild: 50
+    queue: migration
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 8
+      targetCPUUtilizationPercentage: 75
+
+  build:
+    replicaCount: 1
+    concurrency: 2
+    maxTasksPerChild: 100
+    queue: build
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1.5"
+        memory: 2Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 75
+
+  indexing:
+    replicaCount: 1
+    concurrency: 1
+    maxTasksPerChild: 20
+    queue: indexing
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+  beat:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
+# ── Database Migration (init container) ──────────────────────────
+migration:
+  enabled: true
+  command: ["alembic", "upgrade", "head"]
+
+# ── Qdrant (internal StatefulSet with Azure Disk) ────────────────
+qdrant:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: qdrant/qdrant
+    tag: latest
+    pullPolicy: IfNotPresent
+  port: 6333
+  grpcPort: 6334
+  collection: mulesoft_knowledge
+  persistence:
+    enabled: true
+    size: 100Gi
+    storageClass: managed-csi-premium
+    # Azure Premium SSD (Premium_LRS) via managed-csi-premium StorageClass
+    accessModes:
+      - ReadWriteOnce
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  nodeSelector:
+    kubernetes.io/os: linux
+
+# ── PostgreSQL (External — Azure Database for PostgreSQL Flexible Server)
+postgresql:
+  enabled: false  # Disabled: using external Azure Database for PostgreSQL
+  auth:
+    username: pgadmin
+    database: migrator
+
+externalDatabase:
+  enabled: true
+  host: "psql-migrator-production.postgres.database.azure.com"
+  port: 5432
+  database: migrator
+  username: pgadmin
+  existingSecret: migrator-kv-synced-secrets
+  existingSecretKey: POSTGRES_PASSWORD
+  sslMode: require
+  connectionString: "postgresql+asyncpg://pgadmin:$(POSTGRES_PASSWORD)@psql-migrator-production.postgres.database.azure.com:5432/migrator?ssl=require"
+
+# ── Redis (External — Azure Cache for Redis) ────────────────────
+redis:
+  enabled: false  # Disabled: using external Azure Cache for Redis
+
+externalRedis:
+  enabled: true
+  host: "redis-migrator-production.redis.cache.windows.net"
+  port: 6380
+  tls: true
+  existingSecret: migrator-kv-synced-secrets
+  existingSecretKey: REDIS_PASSWORD
+  connectionString: "rediss://:$(REDIS_PASSWORD)@redis-migrator-production.redis.cache.windows.net:6380/0"
+  celeryBrokerUrl: "rediss://:$(REDIS_PASSWORD)@redis-migrator-production.redis.cache.windows.net:6380/1"
+  celeryResultBackend: "rediss://:$(REDIS_PASSWORD)@redis-migrator-production.redis.cache.windows.net:6380/1"
+
+# ── Ingress (Azure Application Gateway Ingress Controller) ──────
+ingress:
+  enabled: true
+  className: azure-application-gateway
+  annotations:
+    appgw.ingress.kubernetes.io/ssl-redirect: "true"
+    appgw.ingress.kubernetes.io/backend-protocol: "http"
+    appgw.ingress.kubernetes.io/request-timeout: "300"
+    appgw.ingress.kubernetes.io/connection-draining: "true"
+    appgw.ingress.kubernetes.io/connection-draining-timeout: "30"
+    appgw.ingress.kubernetes.io/cookie-based-affinity: "false"
+    appgw.ingress.kubernetes.io/waf-policy-for-path: "/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/<waf-policy>"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: migrator.yourdomain.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: migrator-tls
+      hosts:
+        - migrator.yourdomain.com
+
+# ── Network Policy ───────────────────────────────────────────────
+networkPolicy:
+  enabled: true
+
+# ── Reindex CronJob ──────────────────────────────────────────────
+reindexCronJob:
+  enabled: true
+  schedule: "0 2 * * *"
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+# ── Service Account (Workload Identity for Key Vault) ───────────
+serviceAccount:
+  create: true
+  name: migrator-sa
+  annotations:
+    azure.workload.identity/client-id: "<managed-identity-client-id>"
+    azure.workload.identity/tenant-id: "<tenant-id>"
+
+# ── Pod Labels for Workload Identity ────────────────────────────
+podLabels:
+  azure.workload.identity/use: "true"

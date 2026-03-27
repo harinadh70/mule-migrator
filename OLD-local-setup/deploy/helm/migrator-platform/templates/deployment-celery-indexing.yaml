@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "migrator-platform.fullname" . }}-celery-indexing
+  labels:
+    {{- include "migrator-platform.componentLabels" (dict "root" . "component" "celery-indexing") | nindent 4 }}
+spec:
+  replicas: {{ .Values.celery.indexing.replicaCount }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "celery-indexing") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "celery-indexing") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "migrator-platform.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: celery-indexing
+          image: {{ include "migrator-platform.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - api.tasks.celery_app
+            - worker
+            - --queues={{ .Values.celery.indexing.queue }}
+            - --concurrency={{ .Values.celery.indexing.concurrency }}
+            - --loglevel={{ .Values.config.logLevel }}
+            - --hostname=indexing@%h
+            - --max-tasks-per-child={{ .Values.celery.indexing.maxTasksPerChild }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "migrator-platform.fullname" . }}-config
+            - secretRef:
+                name: {{ include "migrator-platform.fullname" . }}-secrets
+          resources:
+            {{- toYaml .Values.celery.indexing.resources | nindent 12 }}
+          volumeMounts:
+            - name: model-cache
+              mountPath: /home/appuser/.cache
+      volumes:
+        - name: model-cache
+          emptyDir: {}

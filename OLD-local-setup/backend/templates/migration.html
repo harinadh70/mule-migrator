@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}Migration — MuleSoft to Spring Boot Migrator{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+<link rel="stylesheet" href="/static/css/migration.css">
+{% endblock %}
+
+{% block loading_content %}
+<div class="progress-stepper" id="progressStepper">
+    <div class="step-row pending" data-step="parse">
+        <div class="step-icon">1</div>
+        <span class="step-label">Parsing MuleSoft XML</span>
+    </div>
+    <div class="step-row pending" data-step="connectors">
+        <div class="step-icon">2</div>
+        <span class="step-label">Mapping connectors</span>
+    </div>
+    <div class="step-row pending" data-step="dataweave">
+        <div class="step-icon">3</div>
+        <span class="step-label">Converting DataWeave scripts</span>
+    </div>
+    <div class="step-row pending" data-step="generate">
+        <div class="step-icon">4</div>
+        <span class="step-label">Generating Spring Boot code</span>
+    </div>
+    <div class="step-row pending" data-step="review">
+        <div class="step-icon">5</div>
+        <span class="step-label">Running code review</span>
+    </div>
+    <div class="step-row pending" data-step="done">
+        <div class="step-icon">&#10003;</div>
+        <span class="step-label">Done</span>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="migration-layout">
+    <!-- Left Panel: Input -->
+    <div class="panel input-panel">
+        <div class="panel-header">
+            <div class="panel-tabs">
+                <button class="tab active" data-tab="mule-xml" onclick="switchInputTab(this)">MuleSoft XML</button>
+                <button class="tab" data-tab="dataweave" onclick="switchInputTab(this)">DataWeave</button>
+                <button class="tab" data-tab="settings" onclick="switchInputTab(this)">Settings</button>
+                <button class="tab" data-tab="llm-settings" onclick="switchInputTab(this)">LLM Settings</button>
+            </div>
+            <div class="header-btn-group">
+                <div class="sample-dropdown" id="sampleDropdown">
+                    <button class="btn btn-sm btn-ghost sample-btn" onclick="toggleSampleMenu(event)">
+                        <span class="btn-icon">&#128209;</span> Samples
+                    </button>
+                    <div class="sample-menu" id="sampleMenu">
+                        <div class="sample-menu-header">Load MuleSoft Sample</div>
+                        <button class="sample-item" onclick="loadSample('http-hello')">
+                            <span class="sample-icon">&#127760;</span>
+                            <div class="sample-info">
+                                <span class="sample-name">HTTP Hello World</span>
+                                <span class="sample-desc">Simple HTTP listener with logger</span>
+                            </div>
+                        </button>
+                        <button class="sample-item" onclick="loadSample('rest-crud')">
+                            <span class="sample-icon">&#128462;</span>
+                            <div class="sample-info">
+                                <span class="sample-name">REST API CRUD</span>
+                                <span class="sample-desc">Full CRUD with APIkit router</span>
+                            </div>
+                        </button>
+                        <button class="sample-item" onclick="loadSample('db-operations')">
+                            <span class="sample-icon">&#128451;</span>
+                            <div class="sample-info">
+                                <span class="sample-name">Database Operations</span>
+                                <span class="sample-desc">MySQL select, insert, update flows</span>
+                            </div>
+                        </button>
+                        <button class="sample-item" onclick="loadSample('salesforce-sync')">
+                            <span class="sample-icon">&#9729;</span>
+                            <div class="sample-info">
+                                <span class="sample-name">Salesforce Sync</span>
+                                <span class="sample-desc">Account sync with error handling</span>
+                            </div>
+                        </button>
+                        <button class="sample-item" onclick="loadSample('file-processing')">
+                            <span class="sample-icon">&#128196;</span>
+                            <div class="sample-info">
+                                <span class="sample-name">File Processing</span>
+                                <span class="sample-desc">CSV batch file with FTP upload</span>
+                            </div>
+                        </button>
+                        <button class="sample-item" onclick="loadSample('api-proxy')">
+                            <span class="sample-icon">&#128274;</span>
+                            <div class="sample-info">
+                                <span class="sample-name">API Gateway Proxy</span>
+                                <span class="sample-desc">Rate limiting, OAuth, CORS proxy</span>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-ghost" onclick="clearAll()">Clear</button>
+                <button class="btn btn-sm migrate-btn" onclick="migrate()">
+                    <span class="btn-icon">&#9654;</span> Migrate
+                </button>
+            </div>
+        </div>
+
+        <!-- Mule XML Tab -->
+        <div class="tab-content active" id="tab-mule-xml">
+            <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()"
+                 ondrop="handleDrop(event)" ondragover="event.preventDefault()" ondragenter="this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')">
+                <input type="file" id="fileInput" accept=".xml,.raml,.yaml,.yml" multiple onchange="handleFileUpload(event)" hidden>
+                <div class="upload-zone-icon">&#128194;</div>
+                <p>Drop MuleSoft XML files here or click to upload</p>
+                <p style="font-size:11px;color:var(--text-muted);margin-top:4px">Supports .xml, .raml, .yaml, .yml &mdash; multiple files allowed</p>
+            </div>
+            <div class="uploaded-files-list" id="uploadedFilesList"></div>
+            <textarea id="muleXmlEditor" placeholder="Paste your MuleSoft XML configuration here..."></textarea>
+        </div>
+
+        <!-- DataWeave Tab -->
+        <div class="tab-content" id="tab-dataweave">
+            <div class="dw-scripts">
+                <div class="dw-add">
+                    <input type="text" id="dwScriptName" placeholder="Script name (e.g. transform-payload)">
+                    <button class="btn btn-sm" onclick="addDwScript()">+ Add Script</button>
+                    <button class="btn btn-sm" style="background:var(--success)" onclick="convertDataWeave()">&#9654; Convert to Java</button>
+                </div>
+                <div id="dwScriptList"></div>
+                <textarea id="dwEditor" placeholder="Paste DataWeave script here...&#10;&#10;%dw 2.0&#10;output application/json&#10;---&#10;payload map (item) -> {&#10;  name: item.firstName ++ ' ' ++ item.lastName&#10;}"></textarea>
+            </div>
+        </div>
+
+        <!-- Settings Tab -->
+        <div class="tab-content" id="tab-settings">
+            <div class="settings-form">
+                <div class="form-group">
+                    <label>Project Name</label>
+                    <input type="text" id="projectName" value="migrated-app" placeholder="my-spring-boot-app">
+                </div>
+                <div class="form-group">
+                    <label>Group ID</label>
+                    <input type="text" id="groupId" value="com.example" placeholder="com.mycompany">
+                </div>
+                <div class="form-group">
+                    <label>Java Version</label>
+                    <select id="javaVersion">
+                        <option value="17" selected>Java 17</option>
+                        <option value="21">Java 21</option>
+                        <option value="11">Java 11</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- LLM Settings Tab -->
+        <div class="tab-content" id="tab-llm-settings">
+            <div class="settings-form">
+                <div class="form-group llm-toggle-group">
+                    <label class="toggle-label">
+                        <span>LLM Code Review</span>
+                        <div class="toggle-switch" onclick="toggleLLM()">
+                            <input type="checkbox" id="llmEnabled">
+                            <span class="toggle-slider"></span>
+                        </div>
+                    </label>
+                    <p class="form-hint">When enabled, an LLM provider will review the generated code for correctness, security, and best practices.</p>
+                </div>
+                <div id="llmSettingsPanel" class="llm-settings-panel disabled">
+                    <div class="form-group">
+                        <label>Provider</label>
+                        <select id="llmProvider" onchange="onProviderChange()">
+                            <option value="">Select a provider...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Model</label>
+                        <select id="llmModel">
+                            <option value="">Select a model...</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="llmApiKeyGroup">
+                        <label>API Key <span class="form-hint-inline">(stored in browser only)</span></label>
+                        <div class="api-key-input">
+                            <input type="password" id="llmApiKey" placeholder="Enter your API key...">
+                            <button class="btn btn-sm btn-ghost" onclick="toggleApiKeyVisibility()" title="Show/hide">&#128065;</button>
+                        </div>
+                        <p class="form-hint" id="llmDocsLink"></p>
+                    </div>
+                    <div class="form-group" id="llmBaseUrlGroup" style="display:none">
+                        <label>Base URL</label>
+                        <input type="text" id="llmBaseUrl" placeholder="http://localhost:11434">
+                    </div>
+                    <div class="llm-provider-info" id="llmProviderInfo"></div>
+                    <div class="form-group">
+                        <button class="btn btn-sm" onclick="testLLMConnection()" id="testLlmBtn">Test Connection</button>
+                        <span id="llmTestResult" class="llm-test-result"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Resizable Divider -->
+    <div class="panel-divider" id="panelDivider"></div>
+
+    <!-- Right Panel: Output -->
+    <div class="panel output-panel">
+        <div class="panel-header">
+            <div class="panel-tabs">
+                <button class="tab active" data-tab="output-files" onclick="switchOutputTab(this)">Generated Files</button>
+                <button class="tab" data-tab="output-summary" onclick="switchOutputTab(this)">Summary</button>
+                <button class="tab" data-tab="output-validation" onclick="switchOutputTab(this)" id="validationTabBtn" style="display:none">Code Review</button>
+            </div>
+            <div class="header-btn-group">
+                <button class="btn btn-sm btn-ghost" onclick="revalidateWithLLM()" id="revalidateBtn" style="display:none" title="Re-run code review">&#8635; Re-validate</button>
+                <button class="btn btn-sm btn-ghost" onclick="validateAllModified()" id="validateModifiedBtn" style="display:none" title="Validate edited files">Validate Edits</button>
+                <button class="btn btn-sm btn-success download-btn" onclick="downloadProject()" id="downloadBtn" disabled>
+                    <span class="btn-icon">&#11015;</span> Download ZIP
+                </button>
+            </div>
+        </div>
+
+        <!-- Generated Files Tab -->
+        <div class="tab-content active" id="tab-output-files">
+            <div class="output-container">
+                <div style="display:flex;flex-direction:column;flex-shrink:0;">
+                    <div class="tree-search-wrapper" id="treeSearchWrapper" style="display:none">
+                        <span class="tree-search-icon">&#128269;</span>
+                        <input type="text" class="tree-search" id="treeSearch" placeholder="Filter files..." oninput="filterFileTree(this.value)">
+                    </div>
+                    <div class="file-tree" id="fileTree">
+                        <div class="empty-state">
+                            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                                <rect x="8" y="4" width="32" height="40" rx="4" stroke="#6366f1" stroke-width="2" fill="none"/>
+                                <path d="M16 16H32M16 24H28M16 32H24" stroke="#6366f1" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
+                            <p>Run migration to see generated Spring Boot files</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="file-content" id="fileContent">
+                    <div class="empty-state">
+                        <p>Select a file to view its contents</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Tab -->
+        <div class="tab-content" id="tab-output-summary">
+            <div id="migrationSummary" class="summary-content">
+                <div class="empty-state"><p>Migration summary will appear here</p></div>
+            </div>
+        </div>
+
+        <!-- Code Review Tab -->
+        <div class="tab-content" id="tab-output-validation">
+            <div id="validationResults" class="summary-content">
+                <div class="empty-state"><p>Enable LLM Code Review in settings and run migration to see results</p></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/properties/properties.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
+<script src="/static/js/migration.js"></script>
+{% endblock %}

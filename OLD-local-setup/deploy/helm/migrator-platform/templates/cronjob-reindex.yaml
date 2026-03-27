@@ -1,0 +1,50 @@
+{{- if .Values.reindexCronJob.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "migrator-platform.fullname" . }}-reindex
+  labels:
+    {{- include "migrator-platform.componentLabels" (dict "root" . "component" "reindex") | nindent 4 }}
+spec:
+  schedule: {{ .Values.reindexCronJob.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "reindex") | nindent 12 }}
+        spec:
+          serviceAccountName: {{ include "migrator-platform.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          restartPolicy: OnFailure
+          containers:
+            - name: reindex
+              image: {{ include "migrator-platform.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python
+                - -m
+                - api.rag.indexer
+                - --full-reindex
+              envFrom:
+                - configMapRef:
+                    name: {{ include "migrator-platform.fullname" . }}-config
+                - secretRef:
+                    name: {{ include "migrator-platform.fullname" . }}-secrets
+              resources:
+                {{- toYaml .Values.reindexCronJob.resources | nindent 16 }}
+              volumeMounts:
+                - name: model-cache
+                  mountPath: /home/appuser/.cache
+          volumes:
+            - name: model-cache
+              emptyDir: {}
+{{- end }}

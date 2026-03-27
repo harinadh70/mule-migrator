@@ -1,0 +1,667 @@
+/* ═══════════════════════════════════════════════════════════════
+   Build & Test page styles
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Page Layout ─────────────────────────────────────────────── */
+.build-page {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* ── Section Labels ──────────────────────────────────────────── */
+.section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+/* ── No Migration Banner ──────────────────────────────────────── */
+.no-migration-banner {
+    background: var(--warning-bg);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: var(--radius);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 13px;
+    color: var(--warning);
+}
+
+.no-migration-banner svg {
+    flex-shrink: 0;
+}
+
+.no-migration-banner a {
+    color: var(--warning);
+    text-decoration: underline;
+    font-weight: 600;
+}
+
+/* ── Prerequisites Card ──────────────────────────────────────── */
+.prereqs-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px 24px;
+}
+
+.prereqs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.prereqs-title {
+    font-size: 15px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.prereqs-title svg {
+    color: var(--accent);
+}
+
+/* Prerequisites grid: 3 cards in a row */
+.prereqs-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+.prereq-item {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+
+.prereq-item:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Animated status indicator */
+.prereq-item.status-ok .prereq-indicator {
+    animation: prereqCheckPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes prereqCheckPop {
+    0% { transform: scale(0); }
+    100% { transform: scale(1); }
+}
+
+.prereq-item.status-fail .prereq-indicator {
+    animation: prereqFailShake 0.4s ease;
+}
+
+@keyframes prereqFailShake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-2px); }
+    75% { transform: translateX(2px); }
+}
+
+/* Status indicator dot */
+.prereq-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--bg-tertiary);
+    transition: background var(--transition), box-shadow var(--transition);
+}
+
+/* Available: green check */
+.prereq-item.status-ok {
+    border-color: rgba(34, 197, 94, 0.3);
+}
+
+.prereq-item.status-ok .prereq-indicator {
+    background: var(--success);
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+}
+
+/* Unavailable: red x */
+.prereq-item.status-fail {
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.prereq-item.status-fail .prereq-indicator {
+    background: var(--error);
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+}
+
+/* Unknown / checking: pulsing dot */
+.prereq-item.status-unknown {
+    border-color: var(--border);
+}
+
+.prereq-item.status-unknown .prereq-indicator {
+    background: var(--text-muted);
+    animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+.prereq-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.prereq-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.prereq-version {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Prereq Install Help (shown when tool is missing) ────────── */
+.prereq-help {
+    width: 100%;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+
+.prereq-hint {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--warning);
+    margin-bottom: 6px;
+}
+
+.prereq-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.prereq-link {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 10px;
+    background: var(--accent-light);
+    color: var(--accent);
+    text-decoration: none;
+    transition: background var(--transition), color var(--transition);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.prereq-link:hover {
+    background: var(--accent);
+    color: #fff;
+}
+
+.prereq-link-cmd {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-weight: 500;
+}
+
+.prereq-link-cmd:hover {
+    background: var(--accent-light);
+    color: var(--accent);
+}
+
+/* Adjust prereq-item layout for help block */
+.prereq-item.status-fail {
+    flex-wrap: wrap;
+}
+
+/* ── Build Actions Grid: 4 cards ─────────────────────────────── */
+.build-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+}
+
+.build-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    transition: border-color var(--transition), box-shadow var(--transition);
+    cursor: default;
+}
+
+.build-card:hover {
+    border-color: rgba(99, 102, 241, 0.3);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.build-card.card-active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-light);
+}
+
+.build-card-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+}
+
+.build-card-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.icon-jar    { background: var(--accent-light); color: var(--accent); }
+.icon-war    { background: var(--warning-bg); color: var(--warning); }
+.icon-docker { background: var(--info-bg); color: var(--info); }
+.icon-test   { background: var(--success-bg); color: var(--success); }
+
+.build-card-meta {
+    flex: 1;
+}
+
+.build-card-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.build-card-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.build-card-desc code {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    background: var(--bg-tertiary);
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+}
+
+/* Docker platform selector */
+.platform-selector-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.platform-selector-group label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.platform-select {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color var(--transition);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 30px;
+}
+
+.platform-select:focus {
+    outline: none;
+    border-color: var(--info);
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15), 0 0 16px rgba(56, 189, 248, 0.08);
+}
+
+.platform-select option {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+/* Build button at bottom of card */
+.build-card-btn {
+    margin-top: auto;
+}
+
+.build-card-btn .btn {
+    width: 100%;
+    justify-content: center;
+}
+
+/* Colored build buttons */
+.btn-war {
+    background: var(--warning-bg) !important;
+    border-color: rgba(245, 158, 11, 0.3) !important;
+    color: var(--warning) !important;
+}
+
+.btn-war:hover:not(:disabled) {
+    background: rgba(245, 158, 11, 0.25) !important;
+}
+
+.btn-docker {
+    background: var(--info-bg) !important;
+    border-color: rgba(56, 189, 248, 0.3) !important;
+    color: var(--info) !important;
+}
+
+.btn-docker:hover:not(:disabled) {
+    background: rgba(56, 189, 248, 0.25) !important;
+}
+
+/* ── Terminal Panel ───────────────────────────────────────────── */
+.terminal-panel {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.terminal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.terminal-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.terminal-dots {
+    display: flex;
+    gap: 6px;
+}
+
+.terminal-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+
+.terminal-dot:nth-child(1) { background: #ef4444; }
+.terminal-dot:nth-child(2) { background: #f59e0b; }
+.terminal-dot:nth-child(3) { background: #22c55e; }
+
+.terminal-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Build status badge in terminal header */
+.build-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    transition: all var(--transition);
+}
+
+.build-status-badge.status-idle {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+}
+
+.build-status-badge.status-running {
+    background: rgba(56, 189, 248, 0.15);
+    color: var(--info);
+}
+
+.build-status-badge.status-success {
+    background: var(--success-bg);
+    color: var(--success);
+}
+
+.build-status-badge.status-failed {
+    background: var(--error-bg);
+    color: var(--error);
+}
+
+.build-status-badge .status-spinner {
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Terminal body: dark output area with auto-scroll */
+.terminal-body {
+    background: #0d1117;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.65;
+    padding: 16px;
+    height: 360px;
+    overflow-y: auto;
+    color: #c9d1d9;
+    flex: 1;
+    scroll-behavior: smooth;
+}
+
+.terminal-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.terminal-body::-webkit-scrollbar-track {
+    background: #0d1117;
+}
+
+.terminal-body::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 3px;
+}
+
+/* Terminal line types with color coding */
+.term-line {
+    display: block;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.term-line-error   { color: #f85149; }  /* red for ERROR */
+.term-line-warning { color: #d29922; }  /* yellow for WARN */
+.term-line-success { color: #3fb950; }  /* green for SUCCESS */
+.term-line-info    { color: #58a6ff; }  /* blue for INFO */
+.term-line-cmd     { color: #d2a8ff; }  /* purple for commands */
+.term-line-default { color: #c9d1d9; }
+
+.term-prompt {
+    color: #3fb950;
+    margin-right: 4px;
+    user-select: none;
+}
+
+.term-empty {
+    color: #484f58;
+    font-style: italic;
+    text-align: center;
+    padding: 80px 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 13px;
+}
+
+/* Terminal typing cursor */
+.terminal-cursor {
+    display: inline-block;
+    width: 7px;
+    height: 14px;
+    background: #3fb950;
+    animation: termBlink 1s step-end infinite;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+}
+
+@keyframes termBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+/* Terminal footer with download area */
+.terminal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.terminal-stats {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.download-btn-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.artifact-info {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.download-artifact-btn {
+    display: none;
+}
+
+.download-artifact-btn.visible {
+    display: inline-flex;
+    animation: downloadBounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes downloadBounce {
+    0%   { transform: scale(0.8); opacity: 0; }
+    60%  { transform: scale(1.05); }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* ── Build Progress State on Cards ───────────────────────────── */
+.build-card.building {
+    border-color: var(--accent);
+    position: relative;
+    overflow: hidden;
+}
+
+.build-card.building::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, var(--accent), var(--purple), transparent);
+    animation: card-progress 1.5s ease-in-out infinite;
+}
+
+@keyframes card-progress {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+.build-card.build-success {
+    border-color: rgba(34, 197, 94, 0.4);
+}
+
+.build-card.build-failed {
+    border-color: rgba(239, 68, 68, 0.4);
+}
+
+/* ── Responsive ───────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+    .build-actions-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .build-page {
+        padding: 16px;
+    }
+
+    .build-actions-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .prereqs-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .terminal-body {
+        height: 260px;
+    }
+}

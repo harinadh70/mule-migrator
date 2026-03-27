@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% block title %}Settings — MuleSoft to Spring Boot Migrator{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/settings.css">
+{% endblock %}
+
+{% block page_header %}
+<div class="page-header-bar">
+    <div class="page-title-section">
+        <button class="mobile-menu-btn" style="display:none">&#9776;</button>
+        <h1>Settings</h1>
+        <span class="page-badge">Configuration</span>
+    </div>
+    <div class="page-actions">
+        <button class="btn btn-ghost btn-sm" onclick="resetAllSettings()">Reset Defaults</button>
+        <button class="btn btn-primary btn-sm" onclick="saveAllSettings()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save Settings
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="settings-layout">
+
+    <!-- Sidebar Navigation -->
+    <nav class="settings-nav">
+        <a class="settings-nav-item active" href="#project-defaults" onclick="scrollToSection('project-defaults', this)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            Project Defaults
+        </a>
+        <a class="settings-nav-item" href="#llm-config" onclick="scrollToSection('llm-config', this)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+            LLM Configuration
+        </a>
+        <a class="settings-nav-item" href="#github-token" onclick="scrollToSection('github-token', this)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            GitHub Token
+        </a>
+    </nav>
+
+    <!-- Settings Sections -->
+    <div class="settings-content" id="settingsContent">
+
+        <!-- ── Project Defaults ───────────────────────────────── -->
+        <section class="settings-section" id="project-defaults">
+            <div class="section-header">
+                <div class="section-header-icon" style="background: var(--accent-light); color: var(--accent);">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                </div>
+                <div>
+                    <h2 class="section-title">Project Defaults</h2>
+                    <p class="section-desc">Default values pre-filled when starting a new migration.</p>
+                </div>
+            </div>
+
+            <div class="settings-card">
+                <div class="settings-row">
+                    <div class="form-group">
+                        <label for="defaultProjectName">Project Name</label>
+                        <input type="text" id="defaultProjectName" placeholder="migrated-app" autocomplete="off">
+                        <p class="form-hint">Used as the Spring Boot artifact ID (lowercase, hyphens only).</p>
+                    </div>
+                </div>
+
+                <div class="settings-row two-col">
+                    <div class="form-group">
+                        <label for="defaultGroupId">Group ID</label>
+                        <input type="text" id="defaultGroupId" placeholder="com.example" autocomplete="off">
+                        <p class="form-hint">Maven group identifier (e.g. com.acme.platform).</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="defaultJavaVersion">Java Version</label>
+                        <select id="defaultJavaVersion">
+                            <option value="17">Java 17 (LTS)</option>
+                            <option value="21">Java 21 (LTS)</option>
+                            <option value="11">Java 11 (LTS)</option>
+                        </select>
+                        <p class="form-hint">Target Java version for generated pom.xml.</p>
+                    </div>
+                </div>
+
+                <div class="settings-row two-col">
+                    <div class="form-group">
+                        <label for="defaultSpringBootVersion">Spring Boot Version</label>
+                        <select id="defaultSpringBootVersion">
+                            <option value="3.3.0">3.3.0 (Recommended)</option>
+                            <option value="3.2.0">3.2.0</option>
+                            <option value="3.1.0">3.1.0</option>
+                            <option value="2.7.18">2.7.18 (Legacy)</option>
+                        </select>
+                        <p class="form-hint">Spring Boot version for generated projects.</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="defaultPackaging">Packaging</label>
+                        <select id="defaultPackaging">
+                            <option value="jar">JAR</option>
+                            <option value="war">WAR</option>
+                        </select>
+                        <p class="form-hint">Default Maven packaging type.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── LLM Configuration ──────────────────────────────── -->
+        <section class="settings-section" id="llm-config">
+            <div class="section-header">
+                <div class="section-header-icon" style="background: var(--info-bg); color: var(--info);">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+                </div>
+                <div>
+                    <h2 class="section-title">LLM Configuration</h2>
+                    <p class="section-desc">Connect a language model provider to enable code review and enhancement during migration.</p>
+                </div>
+            </div>
+
+            <div class="settings-card">
+                <!-- Enable toggle -->
+                <div class="settings-row toggle-row">
+                    <div>
+                        <div class="toggle-label">Enable LLM Code Review</div>
+                        <div class="toggle-desc">When enabled, generated code is reviewed and improved before download.</div>
+                    </div>
+                    <label class="toggle-switch" title="Toggle LLM code review">
+                        <input type="checkbox" id="llmEnabled" onchange="onLLMToggle()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div id="llmSettingsBody" class="llm-settings-body">
+                    <div class="settings-divider"></div>
+
+                    <!-- Provider -->
+                    <div class="settings-row two-col">
+                        <div class="form-group">
+                            <label for="llmProvider">Provider</label>
+                            <select id="llmProvider" onchange="onProviderChange()">
+                                <option value="">Loading providers...</option>
+                            </select>
+                            <p class="form-hint" id="llmProviderInfo">&nbsp;</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="llmModel">Model</label>
+                            <select id="llmModel" onchange="onModelChange()">
+                                <option value="">Select a provider first</option>
+                            </select>
+                            <p class="form-hint" id="llmModelInfo">&nbsp;</p>
+                        </div>
+                    </div>
+
+                    <!-- API Key -->
+                    <div class="settings-row" id="llmApiKeyGroup">
+                        <div class="form-group" style="position: relative;">
+                            <label for="llmApiKey">API Key</label>
+                            <div class="input-with-action">
+                                <input type="password" id="llmApiKey" placeholder="Enter your API key..." autocomplete="new-password" oninput="onLLMFieldChange()">
+                                <button class="input-action-btn" onclick="toggleApiKeyVisibility()" title="Show / hide key">
+                                    <svg id="eyeIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                </button>
+                            </div>
+                            <p class="form-hint" id="llmDocsLink">&nbsp;</p>
+                        </div>
+                    </div>
+
+                    <!-- Base URL (Ollama / custom) -->
+                    <div class="settings-row" id="llmBaseUrlGroup" style="display: none;">
+                        <div class="form-group">
+                            <label for="llmBaseUrl">Base URL</label>
+                            <input type="url" id="llmBaseUrl" placeholder="http://localhost:11434" oninput="onLLMFieldChange()">
+                            <p class="form-hint">The endpoint where your local model server is running.</p>
+                        </div>
+                    </div>
+
+                    <!-- Test Connection -->
+                    <div class="settings-row test-connection-row">
+                        <button class="btn btn-ghost btn-sm" id="testConnectionBtn" onclick="testConnection()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                            Test Connection
+                        </button>
+                        <span class="test-result" id="testResult"></span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── GitHub Token ───────────────────────────────────── -->
+        <section class="settings-section" id="github-token">
+            <div class="section-header">
+                <div class="section-header-icon" style="background: rgba(139, 92, 246, 0.15); color: var(--purple);">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                </div>
+                <div>
+                    <h2 class="section-title">GitHub Token</h2>
+                    <p class="section-desc">Personal access token used to create repositories and push generated code to GitHub.</p>
+                </div>
+            </div>
+
+            <div class="settings-card">
+                <div class="settings-row">
+                    <div class="form-group" style="flex: 1;">
+                        <label for="githubToken">Personal Access Token</label>
+                        <div class="input-with-action">
+                            <input type="password" id="githubToken" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="new-password">
+                            <button class="input-action-btn" onclick="toggleGithubTokenVisibility()" title="Show / hide token">
+                                <svg id="githubEyeIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            </button>
+                        </div>
+                        <p class="form-hint">
+                            Requires <code>repo</code> scope. Generate at
+                            <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="settings-row">
+                    <div class="token-scopes">
+                        <div class="scope-header">Required scopes</div>
+                        <div class="scope-list">
+                            <span class="scope-tag"><span class="scope-dot required"></span>repo</span>
+                            <span class="scope-tag"><span class="scope-dot optional"></span>workflow (optional)</span>
+                            <span class="scope-tag"><span class="scope-dot optional"></span>delete_repo (optional)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-row token-status-row">
+                    <span class="token-status" id="githubTokenStatus"></span>
+                    <button class="btn btn-ghost btn-sm" onclick="clearGithubToken()">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></polyline></svg>
+                        Clear Token
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Bottom padding -->
+        <div style="height: 48px;"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/settings.js"></script>
+{% endblock %}

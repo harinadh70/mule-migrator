@@ -1,0 +1,459 @@
+# =================================================================
+#  Azure DevOps Multi-Stage CI/CD Pipeline
+#  MuleSoft-to-SpringBoot Migrator Platform
+#
+#  Stages:
+#    1. Lint      — ruff (Python) + eslint (TypeScript)
+#    2. Test      — pytest (backend) + vitest (frontend)
+#    3. Build     — Docker build & push to ACR
+#    4. Staging   — Helm deploy to staging namespace
+#    5. Production — Manual approval, then Helm deploy to prod
+# =================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - release/*
+  paths:
+    exclude:
+      - "*.md"
+      - docs/**
+      - .vscode/**
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    exclude:
+      - "*.md"
+      - docs/**
+
+variables:
+  # ── Container Registry ─────────────────────────────────
+  acrName: "migratoracr"
+  acrLoginServer: "$(acrName).azurecr.io"
+  imageRepository: "mulesoft-to-springboot-migrator"
+  dockerfilePath: "Dockerfile"
+
+  # ── AKS Cluster ────────────────────────────────────────
+  aksResourceGroup: "migrator-rg"
+  aksClusterName: "migrator-aks"
+
+  # ── Helm ───────────────────────────────────────────────
+  helmChartPath: "deploy/helm/migrator-platform"
+  helmReleaseName: "migrator"
+
+  # ── Python ─────────────────────────────────────────────
+  pythonVersion: "3.12"
+
+  # ── Node.js ────────────────────────────────────────────
+  nodeVersion: "20.x"
+
+  # ── Image Tag (uses Build.BuildId for unique tagging) ──
+  imageTag: "$(Build.BuildId)"
+
+  # ── Toggle for deploy stages ───────────────────────────
+  isMainBranch: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+  isDevelopBranch: $[eq(variables['Build.SourceBranch'], 'refs/heads/develop')]
+
+stages:
+  # ================================================================
+  #  Stage 1: Lint
+  # ================================================================
+  - stage: Lint
+    displayName: "Lint"
+    jobs:
+      - job: PythonLint
+        displayName: "Python Lint (ruff)"
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - task: UsePythonVersion@0
+            displayName: "Set up Python $(pythonVersion)"
+            inputs:
+              versionSpec: "$(pythonVersion)"
+
+          - task: Cache@2
+            displayName: "Cache pip packages"
+            inputs:
+              key: 'pip | "$(Agent.OS)" | requirements*.txt'
+              path: "$(PIP_CACHE_DIR)"
+            env:
+              PIP_CACHE_DIR: $(Pipeline.Workspace)/.pip
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install ruff
+            displayName: "Install ruff"
+
+          - script: |
+              ruff check . --output-format=github
+            displayName: "Run ruff linter"
+
+          - script: |
+              ruff format --check .
+            displayName: "Check ruff formatting"
+
+      - job: FrontendLint
+        displayName: "Frontend Lint (ESLint)"
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - task: NodeTool@0
+            displayName: "Set up Node.js $(nodeVersion)"
+            inputs:
+              versionSpec: "$(nodeVersion)"
+
+          - task: Cache@2
+            displayName: "Cache npm packages"
+            inputs:
+              key: 'npm | "$(Agent.OS)" | frontend/package-lock.json'
+              path: "frontend/node_modules"
+
+          - script: |
+              cd frontend
+              npm ci
+            displayName: "Install frontend dependencies"
+
+          - script: |
+              cd frontend
+              npx eslint . --max-warnings 0
+            displayName: "Run ESLint"
+
+  # ================================================================
+  #  Stage 2: Test
+  # ================================================================
+  - stage: Test
+    displayName: "Test"
+    dependsOn: Lint
+    jobs:
+      - job: PythonTest
+        displayName: "Python Tests (pytest)"
+        pool:
+          vmImage: "ubuntu-latest"
+        services:
+          postgres:
+            image: postgres:16
+            ports:
+              - "5432:5432"
+            env:
+              POSTGRES_USER: migrator
+              POSTGRES_PASSWORD: migrator_secret
+              POSTGRES_DB: migrator_test
+          redis:
+            image: redis:7-alpine
+            ports:
+              - "6379:6379"
+        steps:
+          - task: UsePythonVersion@0
+            displayName: "Set up Python $(pythonVersion)"
+            inputs:
+              versionSpec: "$(pythonVersion)"
+
+          - task: Cache@2
+            displayName: "Cache pip packages"
+            inputs:
+              key: 'pip | "$(Agent.OS)" | requirements*.txt'
+              path: "$(PIP_CACHE_DIR)"
+            env:
+              PIP_CACHE_DIR: $(Pipeline.Workspace)/.pip
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt -r requirements-dev.txt
+            displayName: "Install Python dependencies"
+
+          - script: |
+              pytest \
+                --tb=short \
+                --junitxml=test-results/pytest-results.xml \
+                --cov=api --cov=backend \
+                --cov-report=xml:test-results/coverage.xml \
+                --cov-report=html:test-results/htmlcov \
+                -x -q
+            displayName: "Run pytest"
+            env:
+              ENVIRONMENT: testing
+              DATABASE_URL: "postgresql+asyncpg://migrator:migrator_secret@localhost:5432/migrator_test"
+              REDIS_URL: "redis://localhost:6379/0"
+              CELERY_BROKER_URL: "redis://localhost:6379/1"
+              CELERY_RESULT_BACKEND: "redis://localhost:6379/1"
+
+          - task: PublishTestResults@2
+            displayName: "Publish test results"
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: "JUnit"
+              testResultsFiles: "test-results/pytest-results.xml"
+              testRunTitle: "Python Tests"
+
+          - task: PublishCodeCoverageResults@2
+            displayName: "Publish code coverage"
+            condition: succeededOrFailed()
+            inputs:
+              summaryFileLocation: "test-results/coverage.xml"
+
+      - job: FrontendTest
+        displayName: "Frontend Tests (Vitest)"
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - task: NodeTool@0
+            displayName: "Set up Node.js $(nodeVersion)"
+            inputs:
+              versionSpec: "$(nodeVersion)"
+
+          - task: Cache@2
+            displayName: "Cache npm packages"
+            inputs:
+              key: 'npm | "$(Agent.OS)" | frontend/package-lock.json'
+              path: "frontend/node_modules"
+
+          - script: |
+              cd frontend
+              npm ci
+            displayName: "Install frontend dependencies"
+
+          - script: |
+              cd frontend
+              npx vitest run \
+                --reporter=junit \
+                --outputFile=../test-results/vitest-results.xml \
+                --coverage
+            displayName: "Run Vitest"
+
+          - task: PublishTestResults@2
+            displayName: "Publish test results"
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: "JUnit"
+              testResultsFiles: "test-results/vitest-results.xml"
+              testRunTitle: "Frontend Tests"
+
+  # ================================================================
+  #  Stage 3: Build (Docker build & push to ACR)
+  # ================================================================
+  - stage: Build
+    displayName: "Build & Push"
+    dependsOn: Test
+    condition: and(succeeded(), or(eq(variables.isMainBranch, true), eq(variables.isDevelopBranch, true)))
+    jobs:
+      - job: DockerBuild
+        displayName: "Docker Build & Push to ACR"
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - task: Docker@2
+            displayName: "Login to ACR"
+            inputs:
+              containerRegistry: "$(acrName)-service-connection"
+              command: "login"
+
+          - task: Docker@2
+            displayName: "Build Docker image"
+            inputs:
+              containerRegistry: "$(acrName)-service-connection"
+              repository: "$(imageRepository)"
+              command: "build"
+              Dockerfile: "$(dockerfilePath)"
+              tags: |
+                $(imageTag)
+                latest
+              arguments: |
+                --build-arg BUILD_ID=$(Build.BuildId)
+                --build-arg BUILD_NUMBER=$(Build.BuildNumber)
+                --build-arg COMMIT_SHA=$(Build.SourceVersion)
+
+          - task: Docker@2
+            displayName: "Push Docker image"
+            inputs:
+              containerRegistry: "$(acrName)-service-connection"
+              repository: "$(imageRepository)"
+              command: "push"
+              tags: |
+                $(imageTag)
+                latest
+
+          # Scan the image for vulnerabilities
+          - task: trivy@1
+            displayName: "Trivy vulnerability scan"
+            inputs:
+              image: "$(acrLoginServer)/$(imageRepository):$(imageTag)"
+              severities: "CRITICAL,HIGH"
+              exitCode: "1"
+            continueOnError: true
+
+  # ================================================================
+  #  Stage 4: Deploy to Staging
+  # ================================================================
+  - stage: DeployStaging
+    displayName: "Deploy to Staging"
+    dependsOn: Build
+    condition: and(succeeded(), or(eq(variables.isMainBranch, true), eq(variables.isDevelopBranch, true)))
+    variables:
+      namespace: "migrator-staging"
+    jobs:
+      - deployment: DeployStaging
+        displayName: "Helm Deploy (Staging)"
+        pool:
+          vmImage: "ubuntu-latest"
+        environment: "migrator-staging"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: HelmInstaller@1
+                  displayName: "Install Helm"
+                  inputs:
+                    helmVersionToInstall: "3.14.x"
+
+                - task: AzureCLI@2
+                  displayName: "Get AKS credentials"
+                  inputs:
+                    azureSubscription: "azure-service-connection"
+                    scriptType: "bash"
+                    scriptLocation: "inlineScript"
+                    inlineScript: |
+                      az aks get-credentials \
+                        --resource-group $(aksResourceGroup) \
+                        --name $(aksClusterName) \
+                        --overwrite-existing
+
+                - task: HelmDeploy@1
+                  displayName: "Helm upgrade (staging)"
+                  inputs:
+                    connectionType: "None"
+                    namespace: "$(namespace)"
+                    command: "upgrade"
+                    chartType: "FilePath"
+                    chartPath: "$(helmChartPath)"
+                    releaseName: "$(helmReleaseName)-staging"
+                    overrideValues: "image.tag=$(imageTag),image.registry=$(acrLoginServer)"
+                    valueFile: "$(helmChartPath)/values.yaml,$(helmChartPath)/values-azure.yaml"
+                    arguments: >-
+                      --create-namespace
+                      --wait
+                      --timeout 10m
+                      --set config.environment=staging
+                      --set api.replicaCount=2
+
+                - task: AzureCLI@2
+                  displayName: "Verify staging deployment"
+                  inputs:
+                    azureSubscription: "azure-service-connection"
+                    scriptType: "bash"
+                    scriptLocation: "inlineScript"
+                    inlineScript: |
+                      echo "Checking deployment status..."
+                      kubectl rollout status deployment/$(helmReleaseName)-staging-api \
+                        -n $(namespace) --timeout=300s
+
+                      echo "Running smoke test..."
+                      STAGING_URL=$(kubectl get ingress -n $(namespace) \
+                        -o jsonpath='{.items[0].spec.rules[0].host}')
+                      HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+                        "https://${STAGING_URL}/health" --max-time 30 || echo "000")
+
+                      if [ "$HTTP_CODE" = "200" ]; then
+                        echo "Staging health check passed (HTTP $HTTP_CODE)"
+                      else
+                        echo "##vso[task.logissue type=warning]Staging health check returned HTTP $HTTP_CODE"
+                      fi
+
+  # ================================================================
+  #  Stage 5: Deploy to Production (manual approval)
+  # ================================================================
+  - stage: DeployProduction
+    displayName: "Deploy to Production"
+    dependsOn: DeployStaging
+    condition: and(succeeded(), eq(variables.isMainBranch, true))
+    variables:
+      namespace: "migrator-prod"
+    jobs:
+      - deployment: DeployProduction
+        displayName: "Helm Deploy (Production)"
+        pool:
+          vmImage: "ubuntu-latest"
+        environment: "migrator-production"  # Environment with manual approval gate
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: HelmInstaller@1
+                  displayName: "Install Helm"
+                  inputs:
+                    helmVersionToInstall: "3.14.x"
+
+                - task: AzureCLI@2
+                  displayName: "Get AKS credentials"
+                  inputs:
+                    azureSubscription: "azure-service-connection"
+                    scriptType: "bash"
+                    scriptLocation: "inlineScript"
+                    inlineScript: |
+                      az aks get-credentials \
+                        --resource-group $(aksResourceGroup) \
+                        --name $(aksClusterName) \
+                        --overwrite-existing
+
+                - task: HelmDeploy@1
+                  displayName: "Helm upgrade (production)"
+                  inputs:
+                    connectionType: "None"
+                    namespace: "$(namespace)"
+                    command: "upgrade"
+                    chartType: "FilePath"
+                    chartPath: "$(helmChartPath)"
+                    releaseName: "$(helmReleaseName)"
+                    overrideValues: "image.tag=$(imageTag),image.registry=$(acrLoginServer)"
+                    valueFile: "$(helmChartPath)/values.yaml,$(helmChartPath)/values-azure.yaml"
+                    arguments: >-
+                      --create-namespace
+                      --wait
+                      --timeout 15m
+                      --atomic
+
+                - task: AzureCLI@2
+                  displayName: "Verify production deployment"
+                  inputs:
+                    azureSubscription: "azure-service-connection"
+                    scriptType: "bash"
+                    scriptLocation: "inlineScript"
+                    inlineScript: |
+                      echo "Checking deployment status..."
+                      kubectl rollout status deployment/$(helmReleaseName)-api \
+                        -n $(namespace) --timeout=300s
+
+                      echo "Running smoke test..."
+                      PROD_URL=$(kubectl get ingress -n $(namespace) \
+                        -o jsonpath='{.items[0].spec.rules[0].host}')
+                      HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+                        "https://${PROD_URL}/health" --max-time 30 || echo "000")
+
+                      if [ "$HTTP_CODE" = "200" ]; then
+                        echo "Production health check passed (HTTP $HTTP_CODE)"
+                      else
+                        echo "##vso[task.logissue type=error]Production health check returned HTTP $HTTP_CODE"
+                        exit 1
+                      fi
+
+                - task: AzureCLI@2
+                  displayName: "Tag image as production"
+                  inputs:
+                    azureSubscription: "azure-service-connection"
+                    scriptType: "bash"
+                    scriptLocation: "inlineScript"
+                    inlineScript: |
+                      az acr import \
+                        --name $(acrName) \
+                        --source $(acrLoginServer)/$(imageRepository):$(imageTag) \
+                        --image $(imageRepository):production \
+                        --force

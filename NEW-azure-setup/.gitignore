@@ -1,0 +1,68 @@
+# =================================================================
+#  MuleSoft-to-SpringBoot Migrator — .gitignore
+# =================================================================
+
+# ── Environment & Secrets ─────────────────────────────────────────
+.env
+*.env.local
+.env.*
+!.env.example
+
+# ── Python ────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual Environments ─────────────────────────────────────────
+.venv/
+venv/
+ENV/
+
+# ── Testing & Coverage ───────────────────────────────────────────
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node / Frontend ──────────────────────────────────────────────
+node_modules/
+dist/
+.cache/
+.parcel-cache/
+.turbo/
+*.tsbuildinfo
+
+# ── Databases ────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── IDE / OS ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Docker ───────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Logs ─────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Project-Specific ─────────────────────────────────────────────
+uploads/
+output/
+migrations_output/
+.celery/

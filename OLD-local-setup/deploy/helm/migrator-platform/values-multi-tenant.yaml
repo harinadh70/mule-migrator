@@ -1,0 +1,72 @@
+# =================================================================
+#  Multi-Tenant Overrides
+# =================================================================
+
+config:
+  environment: production
+
+# ── Row-Level Security ───────────────────────────────────────────
+multiTenant:
+  enabled: true
+  rlsEnabled: true
+  # Per-tenant namespace isolation — the operator creates a namespace
+  # per tenant and installs this chart once per namespace.
+  perTenantNamespaces: true
+  tenantHeader: "X-Tenant-ID"
+  tenantIsolation:
+    database: schema       # schema-per-tenant in PostgreSQL
+    qdrant: collection     # collection-per-tenant in Qdrant
+    redis: prefix          # key-prefix-per-tenant in Redis
+  defaultQuotas:
+    maxMigrationsPerDay: 50
+    maxConcurrentJobs: 3
+    storageGb: 10
+
+# ── Larger defaults for shared infrastructure ────────────────────
+api:
+  replicaCount: 3
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 65
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+
+celery:
+  migration:
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 10
+
+  build:
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 8
+
+postgresql:
+  primary:
+    persistence:
+      size: 100Gi
+    resources:
+      limits:
+        cpu: "4"
+        memory: 8Gi
+
+qdrant:
+  persistence:
+    size: 200Gi
+  resources:
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+networkPolicy:
+  enabled: true

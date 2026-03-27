@@ -1,0 +1,266 @@
+<mxfile>
+  <diagram name="Deployment Pipeline" id="deploy-pipeline">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1500">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="Mule Migrator -- Agentic AI Platform -- CI/CD &amp; Deployment Pipeline" style="text;html=1;fontSize=24;fontStyle=1;fillColor=none;align=center;verticalAlign=middle;fontColor=#1B365D;" vertex="1" parent="1">
+          <mxGeometry x="400" y="20" width="1200" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="End-to-end deployment flow from local development to production Azure environment" style="text;html=1;fontSize=13;fillColor=none;align=center;verticalAlign=middle;fontColor=#666666;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="400" y="55" width="1200" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== PHASE 1: LOCAL DEVELOPMENT ========== -->
+        <mxCell id="phase1-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E8EAF6;strokeColor=#283593;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="2080" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase1-label" value="PHASE 1: LOCAL DEVELOPMENT" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#283593;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="70" y="105" width="280" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="dev" value="Developer" style="shape=actor;whiteSpace=wrap;html=1;fillColor=#283593;fontColor=#FFFFFF;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="110" y="160" width="70" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="vscode" value="VS Code&#xa;---&#xa;Python 3.12&#xa;Node.js 20&#xa;Azure Functions Core Tools&#xa;Azure SWA CLI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1565C0;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="230" y="145" width="190" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="local-test" value="Local Testing&#xa;---&#xa;func start (backend)&#xa;npm run dev (frontend)&#xa;pytest (unit tests)&#xa;npm test (frontend tests)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1976D2;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="470" y="145" width="200" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="git-commit" value="Git Commit&#xa;---&#xa;git add .&#xa;git commit -m &quot;feat: ...&quot;&#xa;Conventional commits&#xa;Pre-commit hooks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#424242;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="720" y="145" width="190" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="git-push" value="Git Push&#xa;---&#xa;git push origin main&#xa;---&#xa;Remote: GitHub / Azure DevOps" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#424242;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="960" y="145" width="200" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- Phase 1 arrows -->
+        <mxCell id="p1a1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#283593;strokeWidth=2;" edge="1" source="dev" target="vscode" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1a2" value="Test" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#283593;fontColor=#283593;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="vscode" target="local-test" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1a3" value="Commit" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#283593;fontColor=#283593;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="local-test" target="git-commit" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1a4" value="Push" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#283593;fontColor=#283593;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="git-commit" target="git-push" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== PHASE 2: INFRASTRUCTURE (TERRAFORM) ========== -->
+        <mxCell id="phase2-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#FFF3E0;strokeColor=#E65100;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="320" width="2080" height="220" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase2-label" value="PHASE 2: INFRASTRUCTURE PROVISIONING (Terraform)" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#E65100;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="70" y="325" width="410" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tf-init" value="terraform init&#xa;---&#xa;Initialize providers:&#xa;  azurerm (~&gt;3.0)&#xa;  azuread (~&gt;2.0)&#xa;  random (~&gt;3.0)&#xa;---&#xa;Backend: local&#xa;(or Azure Storage)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E65100;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="110" y="370" width="200" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="tf-plan" value="terraform plan&#xa;---&#xa;Review changes:&#xa;  Resource Group&#xa;  Function App&#xa;  Static Web App&#xa;  PostgreSQL Flexible&#xa;  Redis Cache&#xa;  Azure OpenAI&#xa;  Key Vault&#xa;  Storage Account&#xa;  VNet + Subnets&#xa;  Private DNS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EF6C00;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="360" y="370" width="200" height="155" as="geometry"/>
+        </mxCell>
+        <mxCell id="tf-apply" value="terraform apply -auto-approve&#xa;---&#xa;Provisions 12+ resources&#xa;Sets up networking&#xa;Configures managed identity&#xa;Creates Key Vault secrets&#xa;Enables VNet integration&#xa;Creates private endpoints&#xa;---&#xa;Duration: ~10-15 minutes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6D00;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="610" y="370" width="220" height="155" as="geometry"/>
+        </mxCell>
+        <mxCell id="tf-output" value="terraform output&#xa;---&#xa;function_app_url&#xa;swa_url&#xa;postgres_host&#xa;redis_host&#xa;openai_endpoint&#xa;keyvault_name&#xa;storage_account&#xa;resource_group" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF8F00;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="880" y="370" width="190" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Phase 2 arrows -->
+        <mxCell id="p2a1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E65100;strokeWidth=2;" edge="1" source="tf-init" target="tf-plan" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2a2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E65100;strokeWidth=2;" edge="1" source="tf-plan" target="tf-apply" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2a3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E65100;strokeWidth=2;" edge="1" source="tf-apply" target="tf-output" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Terraform files box -->
+        <mxCell id="tf-files" value="Terraform Files&#xa;---&#xa;main.tf (resource group, providers)&#xa;function_app.tf (functions + plan)&#xa;static_web_app.tf (SWA + auth)&#xa;database.tf (PostgreSQL + pgvector)&#xa;redis.tf (cache + private endpoint)&#xa;openai.tf (AI service + deployments)&#xa;keyvault.tf (vault + secrets)&#xa;storage.tf (account + queues)&#xa;network.tf (VNet + subnets + DNS)&#xa;monitoring.tf (insights + analytics)&#xa;variables.tf (configurable params)&#xa;outputs.tf (deployment outputs)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF9C4;strokeColor=#F57F17;fontSize=9;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="360" width="250" height="170" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== PHASE 3: BACKEND DEPLOYMENT ========== -->
+        <mxCell id="phase3-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="560" width="2080" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase3-label" value="PHASE 3: BACKEND DEPLOYMENT (Azure Functions)" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#2E7D32;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="70" y="565" width="390" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="be-deps" value="pip install -r&#xa;requirements.txt&#xa;---&#xa;azure-functions&#xa;azure-identity&#xa;azure-keyvault-secrets&#xa;openai&#xa;psycopg2-binary&#xa;redis&#xa;defusedxml&#xa;PyGithub" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="110" y="605" width="190" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="be-test" value="pytest&#xa;---&#xa;Run test suite:&#xa;  test_xml_parser.py&#xa;  test_flow_converter.py&#xa;  test_spring_generator.py&#xa;  test_rag_retriever.py&#xa;  test_api_endpoints.py&#xa;---&#xa;Coverage: &gt;80%" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#388E3C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="350" y="605" width="190" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="be-build" value="func pack&#xa;---&#xa;Package function app&#xa;Include all triggers:&#xa;  HTTP (15 endpoints)&#xa;  Queue (1 worker)&#xa;---&#xa;Validate host.json&#xa;Validate function.json" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#43A047;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="590" y="605" width="190" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="be-deploy" value="func azure functionapp&#xa;  publish mule-migrator-func&#xa;---&#xa;Deploys to Azure Functions&#xa;Consumption plan (Y1)&#xa;Python 3.12 runtime&#xa;---&#xa;Auto-configures:&#xa;  App settings (Key Vault refs)&#xa;  CORS policy&#xa;  Auth settings" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1B5E20;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="830" y="605" width="230" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Phase 3 arrows -->
+        <mxCell id="p3a1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;strokeWidth=2;" edge="1" source="be-deps" target="be-test" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3a2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;strokeWidth=2;" edge="1" source="be-test" target="be-build" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3a3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;strokeWidth=2;" edge="1" source="be-build" target="be-deploy" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== PHASE 4: FRONTEND DEPLOYMENT ========== -->
+        <mxCell id="phase4-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E0F7FA;strokeColor=#00695C;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="780" width="2080" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase4-label" value="PHASE 4: FRONTEND DEPLOYMENT (Azure Static Web App)" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#00695C;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="70" y="785" width="430" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="fe-deps" value="cd frontend &amp;&amp;&#xa;npm install&#xa;---&#xa;react@18&#xa;react-router-dom&#xa;@monaco-editor/react&#xa;tailwindcss&#xa;axios&#xa;react-query" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00695C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="110" y="825" width="190" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="fe-test" value="npm test&#xa;---&#xa;Jest + React Testing Library&#xa;Component tests&#xa;Integration tests&#xa;---&#xa;npm run lint&#xa;ESLint + Prettier check" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00796B;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="350" y="825" width="190" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="fe-build" value="npm run build&#xa;---&#xa;Vite production build&#xa;Output: dist/&#xa;---&#xa;Minified JS/CSS&#xa;Tree shaking&#xa;Code splitting&#xa;Asset hashing" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00897B;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="590" y="825" width="190" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="fe-deploy" value="swa deploy dist/&#xa;  --deployment-token $TOKEN&#xa;  --env production&#xa;---&#xa;Deploys to Azure SWA&#xa;Global CDN distribution&#xa;Auto SSL certificate&#xa;---&#xa;staticwebapp.config.json:&#xa;  Routes + auth rules&#xa;  API proxy to Functions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#004D40;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="830" y="825" width="230" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Phase 4 arrows -->
+        <mxCell id="p4a1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#00695C;strokeWidth=2;" edge="1" source="fe-deps" target="fe-test" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4a2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#00695C;strokeWidth=2;" edge="1" source="fe-test" target="fe-build" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4a3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#00695C;strokeWidth=2;" edge="1" source="fe-build" target="fe-deploy" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== PHASE 5: POST-DEPLOYMENT ========== -->
+        <mxCell id="phase5-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#F3E5F5;strokeColor=#7B1FA2;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1000" width="2080" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="phase5-label" value="PHASE 5: POST-DEPLOYMENT &amp; VERIFICATION" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#7B1FA2;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="70" y="1005" width="370" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="db-migrate" value="python seed_database.py&#xa;---&#xa;Run DB migrations:&#xa;  CREATE TABLE migrations&#xa;  CREATE TABLE migration_files&#xa;  CREATE TABLE rag_documents&#xa;  CREATE TABLE agent_traces&#xa;  CREATE EXTENSION pgvector&#xa;  CREATE INDEX (HNSW)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="110" y="1045" width="230" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="seed-rag" value="python seed_rag.py&#xa;---&#xa;Seed RAG knowledge base:&#xa;  Load 31 markdown docs&#xa;  Generate embeddings&#xa;    (text-embedding-ada-002)&#xa;  Store in rag_documents&#xa;    with pgvector column&#xa;---&#xa;Duration: ~2-3 minutes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#9C27B0;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="390" y="1045" width="220" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="health-check" value="curl /api/health&#xa;---&#xa;Verify all services:&#xa;  database: connected&#xa;  redis: connected&#xa;  openai: connected&#xa;  storage: connected&#xa;  rag_documents: 31&#xa;---&#xa;Expected: HTTP 200&#xa;{&quot;status&quot;: &quot;healthy&quot;}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#AB47BC;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="660" y="1045" width="210" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="smoke-test" value="Smoke Test&#xa;---&#xa;1. Login via Azure AD&#xa;2. Upload test XML&#xa;3. Wait for migration&#xa;4. Verify 21 files generated&#xa;5. Download ZIP&#xa;6. Check /api/stats&#xa;---&#xa;Expected: All pass" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BA68C8;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="920" y="1045" width="190" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="deploy-done" value="DEPLOYMENT&#xa;COMPLETE&#xa;---&#xa;Production URL:&#xa;https://mule-migrator&#xa;  .azurestaticapps.net&#xa;---&#xa;API URL:&#xa;https://mule-migrator-func&#xa;  .azurewebsites.net" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="1160" y="1045" width="220" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- Phase 5 arrows -->
+        <mxCell id="p5a1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;strokeWidth=2;" edge="1" source="db-migrate" target="seed-rag" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5a2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;strokeWidth=2;" edge="1" source="seed-rag" target="health-check" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5a3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;strokeWidth=2;" edge="1" source="health-check" target="smoke-test" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p5a4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;strokeWidth=3;" edge="1" source="smoke-test" target="deploy-done" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== DEPLOYMENT COMMANDS SUMMARY (RIGHT SIDE) ========== -->
+        <mxCell id="cmd-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#FAFAFA;strokeColor=#9E9E9E;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="100" width="690" height="1100" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd-title" value="Deployment Commands Reference" style="text;html=1;fontSize=16;fontStyle=1;fillColor=#1B365D;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;align=center;" vertex="1" parent="1">
+          <mxGeometry x="1550" y="108" width="310" height="28" as="geometry"/>
+        </mxCell>
+
+        <!-- Command blocks -->
+        <mxCell id="cmd1" value="# 1. Infrastructure (one-time)&#xa;cd terraform/&#xa;terraform init&#xa;terraform plan -out=tfplan&#xa;terraform apply tfplan" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263238;fontColor=#4FC3F7;fontSize=11;fontFamily=Courier New;align=left;spacingLeft=12;spacingTop=8;spacingBottom=8;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="150" width="430" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd1-label" value="Terraform" style="text;html=1;fontSize=10;fontStyle=1;fillColor=#E65100;fontColor=#FFFFFF;rounded=1;spacingLeft=4;spacingRight=4;" vertex="1" parent="1">
+          <mxGeometry x="1910" y="155" width="70" height="18" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cmd2" value="# 2. Backend dependencies&#xa;cd backend/&#xa;python -m venv .venv&#xa;source .venv/bin/activate&#xa;pip install -r requirements.txt" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263238;fontColor=#4FC3F7;fontSize=11;fontFamily=Courier New;align=left;spacingLeft=12;spacingTop=8;spacingBottom=8;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="245" width="430" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd2-label" value="Python" style="text;html=1;fontSize=10;fontStyle=1;fillColor=#2E7D32;fontColor=#FFFFFF;rounded=1;spacingLeft=4;spacingRight=4;" vertex="1" parent="1">
+          <mxGeometry x="1910" y="250" width="55" height="18" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cmd3" value="# 3. Run backend tests&#xa;cd backend/&#xa;pytest tests/ -v --cov=. --cov-report=term&#xa;# Expected: all tests pass, coverage &gt;80%" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263238;fontColor=#4FC3F7;fontSize=11;fontFamily=Courier New;align=left;spacingLeft=12;spacingTop=8;spacingBottom=8;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="350" width="430" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd3-label" value="Test" style="text;html=1;fontSize=10;fontStyle=1;fillColor=#2E7D32;fontColor=#FFFFFF;rounded=1;spacingLeft=4;spacingRight=4;" vertex="1" parent="1">
+          <mxGeometry x="1910" y="355" width="40" height="18" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cmd4" value="# 4. Deploy backend to Azure Functions&#xa;cd backend/&#xa;func azure functionapp publish \\&#xa;  mule-migrator-func \\&#xa;  --python" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263238;fontColor=#4FC3F7;fontSize=11;fontFamily=Courier New;align=left;spacingLeft=12;spacingTop=8;spacingBottom=8;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="440" width="430" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd4-label" value="Deploy" style="text;html=1;fontSize=10;fontStyle=1;fillColor=#FF6D00;fontColor=#FFFFFF;rounded=1;spacingLeft=4;spacingRight=4;" vertex="1" parent="1">
+          <mxGeometry x="1910" y="445" width="55" height="18" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cmd5" value="# 5. Build frontend&#xa;cd frontend/&#xa;npm install&#xa;npm run build  # Vite production build&#xa;# Output: frontend/dist/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263238;fontColor=#4FC3F7;fontSize=11;fontFamily=Courier New;align=left;spacingLeft=12;spacingTop=8;spacingBottom=8;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="540" width="430" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd5-label" value="Build" style="text;html=1;fontSize=10;fontStyle=1;fillColor=#00695C;fontColor=#FFFFFF;rounded=1;spacingLeft=4;spacingRight=4;" vertex="1" parent="1">
+          <mxGeometry x="1910" y="545" width="48" height="18" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cmd6" value="# 6. Deploy frontend to Static Web App&#xa;npx @azure/static-web-apps-cli deploy \\&#xa;  frontend/dist/ \\&#xa;  --deployment-token $SWA_TOKEN \\&#xa;  --env production" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263238;fontColor=#4FC3F7;fontSize=11;fontFamily=Courier New;align=left;spacingLeft=12;spacingTop=8;spacingBottom=8;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="640" width="430" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd6-label" value="Deploy" style="text;html=1;fontSize=10;fontStyle=1;fillColor=#00695C;fontColor=#FFFFFF;rounded=1;spacingLeft=4;spacingRight=4;" vertex="1" parent="1">
+          <mxGeometry x="1910" y="645" width="55" height="18" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cmd7" value="# 7. Seed database &amp; RAG knowledge base&#xa;cd backend/&#xa;python scripts/seed_database.py  # Create tables&#xa;python scripts/seed_rag.py       # Load 31 docs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263238;fontColor=#4FC3F7;fontSize=11;fontFamily=Courier New;align=left;spacingLeft=12;spacingTop=8;spacingBottom=8;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="745" width="430" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd7-label" value="Seed" style="text;html=1;fontSize=10;fontStyle=1;fillColor=#7B1FA2;fontColor=#FFFFFF;rounded=1;spacingLeft=4;spacingRight=4;" vertex="1" parent="1">
+          <mxGeometry x="1910" y="750" width="45" height="18" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cmd8" value="# 8. Verify deployment&#xa;curl -s https://mule-migrator-func\\&#xa;  .azurewebsites.net/api/health | jq .&#xa;# Expected: {&quot;status&quot;: &quot;healthy&quot;, ...}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#263238;fontColor=#4FC3F7;fontSize=11;fontFamily=Courier New;align=left;spacingLeft=12;spacingTop=8;spacingBottom=8;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="835" width="430" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd8-label" value="Verify" style="text;html=1;fontSize=10;fontStyle=1;fillColor=#283593;fontColor=#FFFFFF;rounded=1;spacingLeft=4;spacingRight=4;" vertex="1" parent="1">
+          <mxGeometry x="1910" y="840" width="52" height="18" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cmd9" value="# Quick deploy script (all-in-one)&#xa;./scripts/deploy.sh production&#xa;# Runs steps 2-8 automatically" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1B365D;fontColor=#81D4FA;fontSize=11;fontFamily=Courier New;align=left;spacingLeft=12;spacingTop=8;spacingBottom=8;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="925" width="430" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd9-label" value="All-in-one" style="text;html=1;fontSize=10;fontStyle=1;fillColor=#1B365D;fontColor=#FFFFFF;rounded=1;spacingLeft=4;spacingRight=4;" vertex="1" parent="1">
+          <mxGeometry x="1910" y="930" width="75" height="18" as="geometry"/>
+        </mxCell>
+
+        <!-- Estimated times -->
+        <mxCell id="time-box" value="Estimated Deployment Times&#xa;---&#xa;Infrastructure (Terraform): ~10-15 min&#xa;Backend deploy (func publish): ~2-3 min&#xa;Frontend build + deploy (swa): ~1-2 min&#xa;DB migration + RAG seed: ~3-5 min&#xa;Health check + smoke test: ~1-2 min&#xa;---&#xa;Total (full deploy): ~20-30 min&#xa;Total (code-only update): ~5-8 min" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1;fontSize=10;align=left;spacingLeft=10;fontColor=#1B5E20;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="1000" width="430" height="150" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== LEGEND ========== -->
+        <mxCell id="legend-box" value="" style="rounded=1;whiteSpace=wrap;fillColor=#FAFAFA;strokeColor=#9E9E9E;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1220" width="900" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend-title" value="Legend" style="text;html=1;fontSize=13;fontStyle=1;fillColor=none;fontColor=#1B365D;" vertex="1" parent="1">
+          <mxGeometry x="70" y="1225" width="60" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg1" value="" style="rounded=1;fillColor=#283593;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="80" y="1255" width="25" height="15" as="geometry"/></mxCell>
+        <mxCell id="lg1t" value="Local Dev" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1"><mxGeometry x="110" y="1253" width="70" height="18" as="geometry"/></mxCell>
+        <mxCell id="lg2" value="" style="rounded=1;fillColor=#E65100;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="190" y="1255" width="25" height="15" as="geometry"/></mxCell>
+        <mxCell id="lg2t" value="Terraform" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1"><mxGeometry x="220" y="1253" width="70" height="18" as="geometry"/></mxCell>
+        <mxCell id="lg3" value="" style="rounded=1;fillColor=#2E7D32;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="300" y="1255" width="25" height="15" as="geometry"/></mxCell>
+        <mxCell id="lg3t" value="Backend Deploy" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1"><mxGeometry x="330" y="1253" width="100" height="18" as="geometry"/></mxCell>
+        <mxCell id="lg4" value="" style="rounded=1;fillColor=#00695C;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="440" y="1255" width="25" height="15" as="geometry"/></mxCell>
+        <mxCell id="lg4t" value="Frontend Deploy" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1"><mxGeometry x="470" y="1253" width="100" height="18" as="geometry"/></mxCell>
+        <mxCell id="lg5" value="" style="rounded=1;fillColor=#7B1FA2;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="580" y="1255" width="25" height="15" as="geometry"/></mxCell>
+        <mxCell id="lg5t" value="Post-Deploy" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1"><mxGeometry x="610" y="1253" width="80" height="18" as="geometry"/></mxCell>
+        <mxCell id="lg6" value="" style="rounded=1;fillColor=#263238;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="700" y="1255" width="25" height="15" as="geometry"/></mxCell>
+        <mxCell id="lg6t" value="CLI Commands" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1"><mxGeometry x="730" y="1253" width="90" height="18" as="geometry"/></mxCell>
+        <mxCell id="lg7" value="" style="rounded=1;fillColor=#2E7D32;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="830" y="1255" width="25" height="15" as="geometry"/></mxCell>
+        <mxCell id="lg7t" value="Success" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1"><mxGeometry x="860" y="1253" width="60" height="18" as="geometry"/></mxCell>
+
+        <!-- Branding -->
+        <mxCell id="brand" value="Capgemini Engineering | Mule Migrator Agentic AI Platform | Deployment Pipeline v1.0" style="text;html=1;fontSize=10;fillColor=none;align=right;verticalAlign=middle;fontColor=#999999;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="1500" y="1320" width="600" height="20" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

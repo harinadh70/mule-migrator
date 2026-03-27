@@ -1,0 +1,190 @@
+<mxfile>
+  <diagram name="Solution Architecture" id="solution-arch">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="Mule Migrator — Agentic AI Platform — Solution Architecture" style="text;html=1;fontSize=24;fontStyle=1;fillColor=none;align=center;verticalAlign=middle;fontColor=#1B365D;" vertex="1" parent="1">
+          <mxGeometry x="300" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+
+        <!-- User Layer -->
+        <mxCell id="user-box" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E8F0FE;strokeColor=#0070AD;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="80" width="1500" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="user-label" value="👤 Users &amp; Authentication" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;fontColor=#1B365D;" vertex="1" parent="1">
+          <mxGeometry x="60" y="85" width="200" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="user1" value="Developer&#xa;(Browser)" style="shape=actor;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#fff;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="100" y="110" width="80" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="ad" value="Azure AD&#xa;(Entra ID)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#fff;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="280" y="110" width="120" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="swa" value="Azure Static&#xa;Web App&#xa;(React 18 + TS)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#12ABDB;fontColor=#fff;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="110" width="150" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="cdn" value="Azure CDN&#xa;(Global Edge)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#12ABDB;fontColor=#fff;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="730" y="110" width="120" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- Arrows user layer -->
+        <mxCell id="a1" edge="1" source="user1" target="ad" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a2" edge="1" source="ad" target="swa" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a3" edge="1" source="swa" target="cdn" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Compute Layer -->
+        <mxCell id="compute-box" value="" style="rounded=1;whiteSpace=wrap;fillColor=#FFF3E0;strokeColor=#E65100;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="210" width="1500" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="compute-label" value="⚡ Serverless Compute (Azure Functions — Consumption Plan)" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;fontColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="60" y="215" width="500" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="func-http" value="HTTP Triggers&#xa;(15 endpoints)&#xa;━━━━━━━━━━━&#xa;POST /migrations&#xa;GET /migrations&#xa;GET /migrations/{id}&#xa;GET /files&#xa;GET /stats&#xa;POST /rag/search&#xa;POST /github/push" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6D00;fontColor=#fff;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="245" width="180" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="func-queue" value="Queue Triggers&#xa;(Background Workers)&#xa;━━━━━━━━━━━━━&#xa;migration-queue&#xa;→ XML Parse&#xa;→ Static Engine&#xa;→ RAG Retrieval&#xa;→ GPT-4.1 Enhancement" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6D00;fontColor=#fff;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="290" y="245" width="200" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="engine" value="🔧 Migration Engine&#xa;━━━━━━━━━━━━━━&#xa;XML Parser&#xa;FlowConverter&#xa;ConnectorMapper&#xa;DataWeaveConverter&#xa;SpringBootGenerator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1B365D;fontColor=#fff;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="520" y="245" width="180" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ai-agents" value="🤖 AI Agents (GPT-4.1)&#xa;━━━━━━━━━━━━━━━&#xa;📚 RAG Retriever&#xa;   → pgvector search&#xa;💻 AI Coder&#xa;   → Code review &amp; fix&#xa;📊 Agent Trace Logger&#xa;   → Token &amp; cost tracking" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#fff;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="730" y="245" width="200" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="security" value="🔒 Security Layer&#xa;━━━━━━━━━━━━&#xa;Azure AD Auth&#xa;XXE Prevention&#xa;Rate Limiting&#xa;Input Validation&#xa;CORS Enforcement" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#fff;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="960" y="245" width="160" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="github-svc" value="🐙 GitHub&#xa;Service&#xa;━━━━━━━&#xa;Push files&#xa;Create repos&#xa;PAT auth" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#424242;fontColor=#fff;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1150" y="245" width="120" height="130" as="geometry"/>
+        </mxCell>
+
+        <!-- Arrows compute -->
+        <mxCell id="a4" edge="1" source="swa" target="func-http" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a5" edge="1" source="func-http" target="func-queue" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a6" edge="1" source="func-queue" target="engine" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a7" edge="1" source="func-queue" target="ai-agents" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Data Layer -->
+        <mxCell id="data-box" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="420" width="1500" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="data-label" value="💾 Data &amp; Storage Layer" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;fontColor=#2E7D32;" vertex="1" parent="1">
+          <mxGeometry x="60" y="425" width="250" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="postgres" value="Azure PostgreSQL&#xa;Flexible Server&#xa;(B1ms)&#xa;━━━━━━━━━━━━&#xa;migrations table&#xa;builds table&#xa;users table&#xa;rag_documents + pgvector" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#fff;fontSize=10;align=left;spacingLeft=10;size=10;" vertex="1" parent="1">
+          <mxGeometry x="100" y="450" width="200" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="redis" value="Azure Redis Cache&#xa;(Basic C0)&#xa;━━━━━━━━━━━━&#xa;Rate limiting&#xa;Session cache&#xa;TLS 1.2 enforced" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#C62828;fontColor=#fff;fontSize=10;align=left;spacingLeft=10;size=10;" vertex="1" parent="1">
+          <mxGeometry x="370" y="450" width="180" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="storage" value="Azure Storage&#xa;━━━━━━━━━━━━&#xa;Queue: migration-queue&#xa;Queue: build-queue&#xa;Table: build-logs&#xa;Blob: function code" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#F57F17;fontColor=#fff;fontSize=10;align=left;spacingLeft=10;size=10;" vertex="1" parent="1">
+          <mxGeometry x="620" y="450" width="180" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="keyvault" value="Azure Key Vault&#xa;━━━━━━━━━━━━&#xa;DB password&#xa;Redis key&#xa;OpenAI key&#xa;GitHub PAT&#xa;Managed Identity" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1B365D;fontColor=#fff;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="870" y="450" width="160" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- AI Layer -->
+        <mxCell id="ai-box" value="" style="rounded=1;whiteSpace=wrap;fillColor=#F3E5F5;strokeColor=#7B1FA2;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="590" width="1500" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="ai-label" value="🧠 AI &amp; Intelligence Layer (Southeast Asia — Singapore)" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;fontColor=#7B1FA2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="595" width="500" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="openai" value="Azure OpenAI Service&#xa;━━━━━━━━━━━━━━━━&#xa;GPT-4.1 (GlobalStandard)&#xa;Code review &amp; enhancement&#xa;10K TPM capacity" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#fff;fontSize=11;align=left;spacingLeft=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="625" width="250" height="70" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="embedding" value="text-embedding-3-large&#xa;━━━━━━━━━━━━━━━━━━&#xa;3072 dimensions&#xa;RAG vector embeddings&#xa;Cosine similarity search" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#fff;fontSize=11;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="400" y="625" width="250" height="70" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="rag-kb" value="RAG Knowledge Base&#xa;━━━━━━━━━━━━━━━━━━&#xa;31 documents indexed&#xa;4 categories: mulesoft, dataweave,&#xa;connector, best-practice" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#fff;fontSize=11;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="700" y="625" width="280" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- Monitoring -->
+        <mxCell id="monitor-box" value="" style="rounded=1;whiteSpace=wrap;fillColor=#FFF8E1;strokeColor=#F57F17;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="740" width="1500" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="monitor-label" value="📊 Monitoring &amp; Observability" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;fontColor=#F57F17;" vertex="1" parent="1">
+          <mxGeometry x="60" y="745" width="300" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="appinsights" value="Application Insights" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F57F17;fontColor=#fff;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="770" width="160" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="loganalytics" value="Log Analytics Workspace" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F57F17;fontColor=#fff;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="300" y="770" width="200" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="alerts" value="Alert Rules (5xx, failures, CPU, memory)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F57F17;fontColor=#fff;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="540" y="770" width="300" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="diag" value="Diagnostic Settings" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F57F17;fontColor=#fff;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="880" y="770" width="160" height="35" as="geometry"/>
+        </mxCell>
+
+        <!-- Network box -->
+        <mxCell id="net-box" value="" style="rounded=1;whiteSpace=wrap;fillColor=#ECEFF1;strokeColor=#607D8B;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="210" width="230" height="600" as="geometry"/>
+        </mxCell>
+        <mxCell id="net-label" value="🌐 Network&#xa;(East Asia)" style="text;html=1;fontSize=12;fontStyle=1;fillColor=none;fontColor=#607D8B;" vertex="1" parent="1">
+          <mxGeometry x="1310" y="215" width="120" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="vnet" value="VNet&#xa;10.0.0.0/16" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#607D8B;fontColor=#fff;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="260" width="190" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="subnet1" value="snet-function-app&#xa;10.0.1.0/24" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#90A4AE;fontColor=#fff;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="310" width="190" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="subnet2" value="snet-private-endpoints&#xa;10.0.2.0/24" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#90A4AE;fontColor=#fff;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="360" width="190" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="subnet3" value="snet-postgresql&#xa;10.0.3.0/24" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#90A4AE;fontColor=#fff;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="410" width="190" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="dns1" value="Private DNS Zone&#xa;postgres.database.azure.com" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#455A64;fontColor=#fff;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="470" width="190" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="dns2" value="Private DNS Zone&#xa;redis.cache.windows.net" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#455A64;fontColor=#fff;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="520" width="190" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="ssl" value="🔒 SSL/TLS 1.2+&#xa;All connections encrypted" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#fff;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="580" width="190" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="fw" value="🛡️ Firewall Rules&#xa;Azure Services Only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C62828;fontColor=#fff;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="640" width="190" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="mi" value="🔑 Managed Identity&#xa;No keys in code" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1B365D;fontColor=#fff;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="700" width="190" height="40" as="geometry"/>
+        </mxCell>
+
+        <!-- Region labels -->
+        <mxCell id="region1" value="📍 East Asia (Hong Kong)" style="text;html=1;fontSize=11;fontStyle=3;fillColor=none;fontColor=#607D8B;" vertex="1" parent="1">
+          <mxGeometry x="50" y="840" width="200" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="region2" value="📍 Southeast Asia (Singapore) — OpenAI only" style="text;html=1;fontSize=11;fontStyle=3;fillColor=none;fontColor=#7B1FA2;" vertex="1" parent="1">
+          <mxGeometry x="300" y="840" width="350" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="cost" value="💰 Est. Cost: ~$36/month (Consumption plan)" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;fontColor=#2E7D32;" vertex="1" parent="1">
+          <mxGeometry x="700" y="840" width="350" height="20" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

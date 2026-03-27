@@ -1,0 +1,116 @@
+{{- if .Values.networkPolicy.enabled }}
+# ── API pods: allow ingress on port 8000, egress to postgres/redis/qdrant ──
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "migrator-platform.fullname" . }}-api
+  labels:
+    {{- include "migrator-platform.componentLabels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: {{ .Values.api.port }}
+          protocol: TCP
+  egress:
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # PostgreSQL
+    - ports:
+        - port: 5432
+          protocol: TCP
+    # Redis
+    - ports:
+        - port: 6379
+          protocol: TCP
+    # Qdrant HTTP + gRPC
+    - ports:
+        - port: {{ .Values.qdrant.port }}
+          protocol: TCP
+        - port: {{ .Values.qdrant.grpcPort }}
+          protocol: TCP
+    # External HTTPS (LLM API providers)
+    - ports:
+        - port: 443
+          protocol: TCP
+---
+# ── Celery workers: egress to postgres/redis/qdrant + LLM APIs ──
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "migrator-platform.fullname" . }}-celery-workers
+  labels:
+    {{- include "migrator-platform.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - celery-migration
+          - celery-build
+          - celery-indexing
+          - celery-beat
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Redis (broker + result backend)
+    - ports:
+        - port: 6379
+          protocol: TCP
+    # PostgreSQL
+    - ports:
+        - port: 5432
+          protocol: TCP
+    # Qdrant
+    - ports:
+        - port: {{ .Values.qdrant.port }}
+          protocol: TCP
+        - port: {{ .Values.qdrant.grpcPort }}
+          protocol: TCP
+    # External HTTPS (LLM API providers)
+    - ports:
+        - port: 443
+          protocol: TCP
+---
+# ── Qdrant: only accept from api + celery workers ──
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "migrator-platform.fullname" . }}-qdrant
+  labels:
+    {{- include "migrator-platform.componentLabels" (dict "root" . "component" "qdrant") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "qdrant") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - port: {{ .Values.qdrant.port }}
+          protocol: TCP
+        - port: {{ .Values.qdrant.grpcPort }}
+          protocol: TCP
+{{- end }}

@@ -1,0 +1,301 @@
+@import url('https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: #0070AD;
+    --color-primary-light: #12ABDB;
+    --color-navy: #1B365D;
+    --color-deep-purple: #2B0A3D;
+    --color-bg: #F5F5F5;
+    --color-surface: #FFFFFF;
+    --color-text: #333333;
+    --color-text-muted: #666666;
+  }
+
+  .dark {
+    --color-bg: #0D1928;
+    --color-surface: #11213A;
+    --color-text: #F1F5F9;
+    --color-text-muted: #94A3B8;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  .light html,
+  html:not(.dark) {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-panel dark:bg-navy-900 text-capText dark:text-gray-100 antialiased;
+    font-family: 'Ubuntu', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+
+  /* Corporate scrollbar styling */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0,112,173,0.25) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: rgba(0,112,173,0.25);
+    border-radius: 10px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(0,112,173,0.4);
+  }
+
+  ::selection {
+    background: rgba(0,112,173,0.25);
+    color: #1B365D;
+  }
+
+  .dark ::selection {
+    background: rgba(18,171,219,0.3);
+    color: #fff;
+  }
+}
+
+@layer components {
+  /* ===== Cards ===== */
+  /* Light mode: clean white card. Dark mode: glass morphism */
+  .card {
+    @apply bg-white dark:bg-white/[0.04] dark:backdrop-blur-xl
+           border border-gray-200 dark:border-white/[0.08]
+           rounded-xl shadow-card dark:shadow-glass
+           transition-all duration-200;
+  }
+
+  .card-hover {
+    @apply card hover:shadow-card-hover dark:hover:bg-white/[0.06] dark:hover:border-white/[0.12];
+  }
+
+  /* Glass - dark mode only */
+  .glass {
+    @apply bg-white dark:bg-white/[0.04] dark:backdrop-blur-xl
+           border border-gray-200 dark:border-white/[0.08]
+           rounded-xl shadow-card dark:shadow-glass;
+  }
+
+  .glass-strong {
+    @apply bg-white dark:bg-white/[0.06] dark:backdrop-blur-2xl
+           border border-gray-200 dark:border-white/[0.1]
+           rounded-xl;
+  }
+
+  /* ===== Buttons ===== */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium
+           transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2
+           dark:focus:ring-offset-navy-900
+           disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary text-white
+           hover:bg-primary-dark
+           active:bg-navy;
+  }
+
+  .btn-secondary {
+    @apply btn bg-white dark:bg-white/[0.04] border border-primary/30 dark:border-white/[0.1]
+           text-primary dark:text-gray-300
+           hover:bg-primary/5 dark:hover:bg-white/[0.06] hover:border-primary/50;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-600 text-white
+           hover:bg-red-700;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-capText-light dark:text-gray-400
+           hover:bg-gray-100 dark:hover:bg-white/[0.05];
+  }
+
+  /* ===== Inputs ===== */
+  .input {
+    @apply w-full rounded-lg bg-white dark:bg-white/[0.04]
+           border border-gray-300 dark:border-white/[0.1]
+           px-3.5 py-2.5 text-sm text-capText dark:text-gray-100
+           placeholder-gray-400 dark:placeholder-gray-500
+           transition-all duration-200
+           focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20
+           hover:border-gray-400 dark:hover:border-white/[0.15];
+  }
+
+  .select {
+    @apply input appearance-none bg-no-repeat pr-8 cursor-pointer;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23666' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.5rem center;
+    background-size: 1.5em 1.5em;
+  }
+
+  /* ===== Badges - Clean professional pills ===== */
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
+  }
+
+  .badge-pending {
+    @apply badge bg-gray-100 dark:bg-gray-500/10 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-500/20;
+  }
+
+  .badge-queued {
+    @apply badge bg-gray-100 dark:bg-gray-500/10 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-500/20;
+  }
+
+  .badge-running {
+    @apply badge bg-primary/10 text-primary dark:text-[#12ABDB] border border-primary/20;
+  }
+
+  .badge-completed {
+    @apply badge bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20;
+  }
+
+  .badge-failed {
+    @apply badge bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/20;
+  }
+
+  .badge-cancelled {
+    @apply badge bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20;
+  }
+
+  /* ===== Skeleton ===== */
+  .skeleton {
+    @apply animate-pulse rounded-lg bg-gray-200 dark:bg-white/[0.08];
+  }
+
+  /* ===== Professional text styles ===== */
+  .gradient-text {
+    @apply text-primary dark:text-accent;
+  }
+
+  .gradient-text-brand {
+    @apply text-primary dark:text-accent;
+  }
+}
+
+/* ===== Corporate subtle background ===== */
+.animated-gradient-bg {
+  background: linear-gradient(135deg, rgba(0,112,173,0.02) 0%, rgba(27,54,93,0.02) 100%);
+}
+
+.dark .animated-gradient-bg {
+  background: linear-gradient(135deg, rgba(0,112,173,0.03) 0%, rgba(27,54,93,0.05) 100%);
+}
+
+/* ===== Subtle dot grid pattern (dark mode only) ===== */
+.dot-pattern {
+  background-image: none;
+}
+
+.dark .dot-pattern {
+  background-image: radial-gradient(rgba(0,112,173,0.06) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ===== Mesh gradient (dark mode only) ===== */
+.mesh-gradient {
+  background: none;
+}
+
+.dark .mesh-gradient {
+  background:
+    radial-gradient(at 20% 20%, rgba(0,112,173,0.04) 0px, transparent 50%),
+    radial-gradient(at 80% 10%, rgba(27,54,93,0.03) 0px, transparent 50%),
+    radial-gradient(at 0% 80%, rgba(18,171,219,0.03) 0px, transparent 50%);
+}
+
+/* ===== React Flow custom styles ===== */
+.react-flow__node {
+  @apply !rounded-xl !border-2 !shadow-card;
+}
+
+.react-flow__edge-path {
+  stroke-width: 2;
+}
+
+/* ===== xterm.js container ===== */
+.xterm-container {
+  @apply h-full w-full rounded-lg overflow-hidden;
+}
+
+.xterm-container .xterm {
+  padding: 8px;
+}
+
+/* ===== Professional table row hover ===== */
+.table-row-glow {
+  @apply transition-all duration-200;
+}
+
+.table-row-glow:hover {
+  background: rgba(0,112,173,0.04);
+}
+
+.dark .table-row-glow:hover {
+  background: rgba(0,112,173,0.06);
+}
+
+/* ===== Capgemini blue top border accent ===== */
+.gradient-border {
+  position: relative;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: #0070AD;
+  border-radius: 1px;
+}
+
+/* ===== Connection line for pipeline ===== */
+.flowing-dash {
+  stroke-dasharray: 6 4;
+}
+
+.flowing-dash-active {
+  stroke-dasharray: 6 4;
+}
+
+/* ===== Pulse dot for running status ===== */
+.pulse-dot {
+  position: relative;
+}
+
+.pulse-dot::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0,112,173,0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(0,112,173,0); }
+}

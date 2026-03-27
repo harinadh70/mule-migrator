@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "migrator-platform.fullname" . }}-celery-build
+  labels:
+    {{- include "migrator-platform.componentLabels" (dict "root" . "component" "celery-build") | nindent 4 }}
+spec:
+  {{- if not .Values.celery.build.autoscaling.enabled }}
+  replicas: {{ .Values.celery.build.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "celery-build") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "celery-build") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "migrator-platform.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: celery-build
+          image: {{ include "migrator-platform.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - api.tasks.celery_app
+            - worker
+            - --queues={{ .Values.celery.build.queue }}
+            - --concurrency={{ .Values.celery.build.concurrency }}
+            - --loglevel={{ .Values.config.logLevel }}
+            - --hostname=build@%h
+            - --max-tasks-per-child={{ .Values.celery.build.maxTasksPerChild }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "migrator-platform.fullname" . }}-config
+            - secretRef:
+                name: {{ include "migrator-platform.fullname" . }}-secrets
+          resources:
+            {{- toYaml .Values.celery.build.resources | nindent 12 }}

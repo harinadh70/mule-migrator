@@ -1,0 +1,262 @@
+<mxfile>
+  <diagram name="Data Flow Diagram" id="data-flow">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1400">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="Mule Migrator -- Agentic AI Platform -- Data Flow Diagram" style="text;html=1;fontSize=24;fontStyle=1;fillColor=none;align=center;verticalAlign=middle;fontColor=#1B365D;" vertex="1" parent="1">
+          <mxGeometry x="400" y="20" width="1200" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="Complete data flow from MuleSoft XML upload to Spring Boot project output" style="text;html=1;fontSize=13;fillColor=none;align=center;verticalAlign=middle;fontColor=#666666;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="500" y="55" width="1000" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== SWIM LANE: USER ========== -->
+        <mxCell id="lane-user" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E3F2FD;strokeColor=#0070AD;strokeWidth=2;dashed=0;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="40" y="100" width="2120" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-user-label" value="USER" style="text;html=1;fontSize=16;fontStyle=1;fillColor=#0070AD;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="50" y="105" width="80" height="30" as="geometry"/>
+        </mxCell>
+
+        <!-- User nodes -->
+        <mxCell id="u1" value="Developer&#xa;uploads&#xa;MuleSoft XML" style="shape=actor;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#FFFFFF;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="100" y="155" width="80" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="u2" value="mulesoft-app.xml&#xa;(1-500 KB)" style="shape=document;whiteSpace=wrap;html=1;fillColor=#FFF9C4;strokeColor=#F57F17;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="240" y="155" width="130" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="u3" value="View Migration&#xa;Progress&#xa;(Real-time status)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1F5FE;strokeColor=#0070AD;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1500" y="155" width="140" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="u4" value="Download ZIP&#xa;or&#xa;Push to GitHub" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1750" y="155" width="130" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- User arrows -->
+        <mxCell id="ua1" value="Upload" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0070AD;fontColor=#0070AD;fontSize=9;fontStyle=1;" edge="1" source="u1" target="u2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ua3" value="Poll / SSE" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0070AD;fontColor=#0070AD;fontSize=9;dashed=1;" edge="1" source="u3" target="u4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== SWIM LANE: FRONTEND ========== -->
+        <mxCell id="lane-fe" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E0F7FA;strokeColor=#12ABDB;strokeWidth=2;dashed=0;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="40" y="280" width="2120" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-fe-label" value="FRONTEND" style="text;html=1;fontSize=16;fontStyle=1;fillColor=#12ABDB;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="50" y="285" width="120" height="30" as="geometry"/>
+        </mxCell>
+
+        <!-- Frontend nodes -->
+        <mxCell id="f1" value="Azure Static Web App&#xa;(React 18 + TypeScript)&#xa;---&#xa;File upload component&#xa;Drag &amp; drop zone" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#12ABDB;fontColor=#FFFFFF;fontSize=10;fontStyle=0;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="200" y="325" width="200" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="f2" value="Client-side&#xa;Validation&#xa;---&#xa;.xml extension check&#xa;File size &lt; 5MB&#xa;Content-type check" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0097A7;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="460" y="325" width="160" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="f3" value="POST /api/migrations&#xa;---&#xa;multipart/form-data&#xa;+ Azure AD token&#xa;+ session cookie" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00838F;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="680" y="325" width="170" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="f4" value="GET /api/migrations/{id}&#xa;---&#xa;Poll every 2s&#xa;Status: pending&#xa;  processing&#xa;  completed / failed" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00838F;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1440" y="325" width="180" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="f5" value="Results Page&#xa;---&#xa;File tree viewer&#xa;Code preview (Monaco)&#xa;Download ZIP button&#xa;Push to GitHub button" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#12ABDB;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1700" y="325" width="180" height="90" as="geometry"/>
+        </mxCell>
+
+        <!-- Frontend arrows -->
+        <mxCell id="fa1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#12ABDB;strokeWidth=2;" edge="1" source="u2" target="f1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="fa2" value="Validate" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#12ABDB;fontColor=#006064;fontSize=9;fontStyle=1;" edge="1" source="f1" target="f2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="fa3" value="HTTP POST" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#12ABDB;fontColor=#006064;fontSize=9;fontStyle=1;" edge="1" source="f2" target="f3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="fa5" value="Display" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#12ABDB;fontColor=#006064;fontSize=9;fontStyle=1;" edge="1" source="f4" target="f5" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="fa6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#12ABDB;strokeWidth=1;dashed=1;" edge="1" source="f5" target="u4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="fa7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#12ABDB;strokeWidth=1;dashed=1;" edge="1" source="f4" target="u3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== SWIM LANE: BACKEND ========== -->
+        <mxCell id="lane-be" value="" style="rounded=1;whiteSpace=wrap;fillColor=#FFF3E0;strokeColor=#E65100;strokeWidth=2;dashed=0;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="40" y="460" width="2120" height="260" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-be-label" value="BACKEND" style="text;html=1;fontSize=16;fontStyle=1;fillColor=#E65100;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="50" y="465" width="110" height="30" as="geometry"/>
+        </mxCell>
+
+        <!-- Backend nodes -->
+        <mxCell id="b1" value="HTTP Trigger&#xa;Function&#xa;---&#xa;Auth validation&#xa;XXE prevention&#xa;Rate limit check&#xa;Input sanitization" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6D00;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="180" y="510" width="170" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="b2" value="Storage Queue&#xa;---&#xa;migration-queue&#xa;Message: migration_id&#xa;Dequeue count&#xa;Visibility timeout: 5m" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF8F00;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="400" y="510" width="170" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="b3" value="Queue Trigger&#xa;Migration Worker&#xa;---&#xa;Picks up message&#xa;Loads XML from DB&#xa;Starts pipeline" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EF6C00;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="620" y="510" width="170" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- Static engine sub-steps -->
+        <mxCell id="b4" value="XML Parser&#xa;---&#xa;defusedxml (XXE safe)&#xa;Extract flows, connectors,&#xa;DW expressions, config" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1B365D;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="840" y="505" width="170" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="b5" value="FlowConverter&#xa;---&#xa;MuleSoft flow -&gt;&#xa;Spring REST controller&#xa;Route mapping&#xa;Error handling" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1B365D;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="505" width="170" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="b6" value="SpringBootGenerator&#xa;---&#xa;Generates 21 files:&#xa;pom.xml, Application.java,&#xa;Controllers, Services,&#xa;Models, Config, Tests,&#xa;Dockerfile, README" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1B365D;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="505" width="190" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- 21 files output -->
+        <mxCell id="b7" value="21 Generated Files&#xa;---&#xa;pom.xml&#xa;Application.java&#xa;*Controller.java (x4)&#xa;*Service.java (x4)&#xa;*Model.java (x3)&#xa;application.yml&#xa;Dockerfile&#xa;docker-compose.yml&#xa;*Test.java (x4)&#xa;README.md" style="shape=document;whiteSpace=wrap;html=1;fillColor=#FFF9C4;strokeColor=#F57F17;fontSize=9;align=left;spacingLeft=10;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="1480" y="500" width="160" height="190" as="geometry"/>
+        </mxCell>
+
+        <!-- Return path -->
+        <mxCell id="b8" value="GET /api/migrations/{id}/files&#xa;---&#xa;Return file list + content&#xa;Base64 encoded for binary" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6D00;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1700" y="510" width="200" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="b9" value="GET /download/{id}&#xa;---&#xa;ZIP archive&#xa;(all 21 files)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1700" y="610" width="160" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="b10" value="POST /github/push&#xa;---&#xa;Create/update repo&#xa;Commit all files&#xa;PAT authentication" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#424242;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1880" y="610" width="160" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- Backend arrows -->
+        <mxCell id="ba1" value="Enqueue" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E65100;fontColor=#E65100;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="b1" target="b2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ba2" value="Dequeue" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E65100;fontColor=#E65100;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="b2" target="b3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ba3" value="Parse" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="b3" target="b4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ba4" value="Convert" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="b4" target="b5" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ba5" value="Generate" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="b5" target="b6" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ba6" value="Output" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="b6" target="b7" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ba7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E65100;strokeWidth=2;" edge="1" source="b7" target="b8" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ba8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;strokeWidth=1;" edge="1" source="b8" target="b9" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ba9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#424242;strokeWidth=1;" edge="1" source="b8" target="b10" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ba10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E65100;strokeWidth=2;" edge="1" source="f3" target="b1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ba11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#E65100;strokeWidth=1;dashed=1;" edge="1" source="b8" target="f4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== SWIM LANE: AI ========== -->
+        <mxCell id="lane-ai" value="" style="rounded=1;whiteSpace=wrap;fillColor=#F3E5F5;strokeColor=#7B1FA2;strokeWidth=2;dashed=0;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="40" y="740" width="2120" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-ai-label" value="AI LAYER" style="text;html=1;fontSize=16;fontStyle=1;fillColor=#7B1FA2;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="50" y="745" width="100" height="30" as="geometry"/>
+        </mxCell>
+
+        <!-- AI nodes -->
+        <mxCell id="ai1" value="RAG Retriever Agent&#xa;---&#xa;Input: parsed XML context&#xa;Query embedding (ada-002)&#xa;Cosine similarity search&#xa;Top-5 relevant docs&#xa;---&#xa;Output: knowledge context" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="400" y="790" width="210" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="ai2" value="pgvector DB&#xa;---&#xa;31 knowledge documents&#xa;1536-dim embeddings&#xa;Categories:&#xa;  mulesoft (8)&#xa;  dataweave (6)&#xa;  connector (10)&#xa;  best-practice (7)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#CE93D8;fontColor=#000000;fontSize=10;align=left;spacingLeft=10;size=10;" vertex="1" parent="1">
+          <mxGeometry x="680" y="780" width="190" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="ai3" value="Azure OpenAI GPT-4.1&#xa;(Singapore region)&#xa;---&#xa;System prompt + context&#xa;+ RAG knowledge&#xa;+ 21 generated files&#xa;---&#xa;Reviews &amp; enhances code&#xa;Fixes compilation issues&#xa;Adds best practices" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#6A1B9A;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="940" y="780" width="210" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="ai4" value="Enhanced Java Files&#xa;---&#xa;AI-reviewed code&#xa;Best practices applied&#xa;Error handling improved&#xa;Spring Boot idioms&#xa;---&#xa;Stored back in DB" style="shape=document;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="790" width="180" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="ai5" value="Agent Trace Log&#xa;---&#xa;Tokens: ~4K-12K&#xa;Cost: ~$0.02-0.08&#xa;Duration: 8-25s&#xa;Model: gpt-4.1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4A148C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="800" width="160" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- AI arrows -->
+        <mxCell id="aia1" value="Query" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;fontColor=#7B1FA2;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="ai1" target="ai2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="aia2" value="Context + Files" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;fontColor=#7B1FA2;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="ai2" target="ai3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="aia3" value="Enhanced" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;fontColor=#7B1FA2;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="ai3" target="ai4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="aia4" value="Log" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;fontColor=#7B1FA2;fontSize=9;fontStyle=1;strokeWidth=1;" edge="1" source="ai3" target="ai5" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- Connect backend to AI -->
+        <mxCell id="aia5" value="Invoke RAG" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;fontColor=#7B1FA2;fontSize=9;fontStyle=1;strokeWidth=2;dashed=1;" edge="1" source="b6" target="ai1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- Connect AI output back to backend -->
+        <mxCell id="aia6" value="Store enhanced files" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;fontColor=#7B1FA2;fontSize=9;fontStyle=1;strokeWidth=2;dashed=1;" edge="1" source="ai4" target="b7" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== SWIM LANE: DATABASE ========== -->
+        <mxCell id="lane-db" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;dashed=0;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="40" y="960" width="2120" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-db-label" value="DATABASE" style="text;html=1;fontSize=16;fontStyle=1;fillColor=#2E7D32;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="50" y="965" width="110" height="30" as="geometry"/>
+        </mxCell>
+
+        <!-- Database nodes -->
+        <mxCell id="db1" value="PostgreSQL Flexible Server&#xa;(B1ms, East Asia)&#xa;---&#xa;migrations table&#xa;  id, status, xml_content,&#xa;  created_at, user_id" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;size=10;" vertex="1" parent="1">
+          <mxGeometry x="200" y="1010" width="220" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="db2" value="migration_files table&#xa;---&#xa;id, migration_id,&#xa;file_path, file_content,&#xa;file_type, is_ai_enhanced" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#388E3C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;size=10;" vertex="1" parent="1">
+          <mxGeometry x="480" y="1010" width="200" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="db3" value="rag_documents table&#xa;---&#xa;id, title, content,&#xa;category, embedding&#xa;(vector 1536)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#388E3C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;size=10;" vertex="1" parent="1">
+          <mxGeometry x="740" y="1010" width="200" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="db4" value="agent_traces table&#xa;---&#xa;id, migration_id,&#xa;agent_name, tokens_used,&#xa;cost, duration_ms" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#388E3C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;size=10;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="1010" width="200" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="db5" value="Redis Cache&#xa;(Basic C0)&#xa;---&#xa;Rate limit counters&#xa;Session cache&#xa;Migration status cache" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#C62828;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;size=10;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="1010" width="190" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="db6" value="Azure Storage&#xa;---&#xa;Queue: migration-queue&#xa;Table: migration-status&#xa;Blob: (future file store)" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#1565C0;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;size=10;" vertex="1" parent="1">
+          <mxGeometry x="1510" y="1010" width="190" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- DB connections -->
+        <mxCell id="dba1" value="Store XML" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;fontColor=#2E7D32;fontSize=9;fontStyle=1;dashed=1;" edge="1" source="b1" target="db1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dba2" value="Store files" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;fontColor=#2E7D32;fontSize=9;fontStyle=1;dashed=1;" edge="1" source="b7" target="db2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dba3" value="Search embeddings" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;fontColor=#7B1FA2;fontSize=9;fontStyle=1;dashed=1;" edge="1" source="ai1" target="db3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dba4" value="Log traces" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#7B1FA2;fontColor=#7B1FA2;fontSize=9;fontStyle=1;dashed=1;" edge="1" source="ai5" target="db4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="dba5" value="Rate limits" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#C62828;fontColor=#C62828;fontSize=9;fontStyle=1;dashed=1;" edge="1" source="b1" target="db5" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== LEGEND ========== -->
+        <mxCell id="legend-box" value="" style="rounded=1;whiteSpace=wrap;fillColor=#FAFAFA;strokeColor=#9E9E9E;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1160" width="700" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend-title" value="Legend" style="text;html=1;fontSize=13;fontStyle=1;fillColor=none;fontColor=#1B365D;" vertex="1" parent="1">
+          <mxGeometry x="50" y="1165" width="60" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg1" value="" style="rounded=1;fillColor=#0070AD;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1195" width="30" height="15" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg1t" value="User Actions" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="95" y="1193" width="80" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg2" value="" style="rounded=1;fillColor=#12ABDB;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="190" y="1195" width="30" height="15" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg2t" value="Frontend (SWA)" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="225" y="1193" width="100" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg3" value="" style="rounded=1;fillColor=#E65100;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="340" y="1195" width="30" height="15" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg3t" value="Backend (Functions)" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="375" y="1193" width="120" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg4" value="" style="rounded=1;fillColor=#7B1FA2;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1220" width="30" height="15" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg4t" value="AI / Agentic" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="95" y="1218" width="80" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg5" value="" style="rounded=1;fillColor=#2E7D32;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="190" y="1220" width="30" height="15" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg5t" value="Database / Storage" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="225" y="1218" width="110" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg6" value="" style="endArrow=classic;strokeColor=#333;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="340" y="1228" as="sourcePoint"/><mxPoint x="380" y="1228" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="leg6t" value="Sync flow" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="385" y="1218" width="60" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="leg7" value="" style="endArrow=classic;strokeColor=#333;strokeWidth=1;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="470" y="1228" as="sourcePoint"/><mxPoint x="510" y="1228" as="targetPoint"/></mxGeometry>
+        </mxCell>
+        <mxCell id="leg7t" value="Async / Store" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="515" y="1218" width="80" height="18" as="geometry"/>
+        </mxCell>
+
+        <!-- Capgemini branding -->
+        <mxCell id="brand" value="Capgemini Engineering | Mule Migrator Agentic AI Platform | Data Flow Diagram v1.0" style="text;html=1;fontSize=10;fillColor=none;align=right;verticalAlign=middle;fontColor=#999999;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="1500" y="1170" width="600" height="20" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

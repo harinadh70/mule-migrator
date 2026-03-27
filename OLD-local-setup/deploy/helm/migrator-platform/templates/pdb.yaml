@@ -1,0 +1,13 @@
+{{- if .Values.api.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "migrator-platform.fullname" . }}-api
+  labels:
+    {{- include "migrator-platform.componentLabels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.api.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+{{- end }}

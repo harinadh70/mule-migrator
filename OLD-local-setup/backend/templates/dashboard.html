@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — MuleSoft to Spring Boot Migrator{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/dashboard.css">
+{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="dashboard-hero">
+        <h1>MuleSoft to Spring Boot Migrator</h1>
+        <p>Convert your MuleSoft applications to production-ready Spring Boot projects with intelligent code generation, Swagger support, and one-click deployment.</p>
+    </div>
+
+    <div class="quick-actions">
+        <a href="/migrate" class="action-card">
+            <div class="action-icon migrate">&#9654;</div>
+            <div>
+                <h3>Start Migration</h3>
+                <p>Upload MuleSoft XML files and generate a complete Spring Boot project with controllers, services, and tests.</p>
+            </div>
+        </a>
+
+        <a href="/swagger" class="action-card">
+            <div class="action-icon swagger">&#128196;</div>
+            <div>
+                <h3>Swagger / OpenAPI</h3>
+                <p>Generate OpenAPI 3.0 specifications from RAML files or MuleSoft flow definitions.</p>
+            </div>
+        </a>
+
+        <a href="/github" class="action-card">
+            <div class="action-icon github">&#128025;</div>
+            <div>
+                <h3>GitHub Integration</h3>
+                <p>Connect your GitHub account to push generated code, create repos, and manage branches.</p>
+            </div>
+        </a>
+
+        <a href="/build" class="action-card">
+            <div class="action-icon build">&#128230;</div>
+            <div>
+                <h3>Build & Test</h3>
+                <p>Build JAR, WAR, or Docker images from generated code. Run test suites with live streaming output.</p>
+            </div>
+        </a>
+
+        <a href="/settings" class="action-card">
+            <div class="action-icon settings">&#9881;</div>
+            <div>
+                <h3>Settings</h3>
+                <p>Configure LLM providers, GitHub tokens, project defaults, and application preferences.</p>
+            </div>
+        </a>
+    </div>
+
+    <div class="status-section">
+        <h2>Migration Status</h2>
+        <div class="status-grid" id="statusGrid">
+            <div class="stat-card">
+                <div class="stat-value" id="statFlows">--</div>
+                <div class="stat-label">Flows Migrated</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="statFiles">--</div>
+                <div class="stat-label">Files Generated</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="statConnectors">--</div>
+                <div class="stat-label">Connectors Mapped</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="statScore">--</div>
+                <div class="stat-label">Code Review Score</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/dashboard.js"></script>
+{% endblock %}

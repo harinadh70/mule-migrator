@@ -1,0 +1,227 @@
+<mxfile>
+  <diagram name="Security Architecture" id="security-arch">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1600">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="Mule Migrator -- Agentic AI Platform -- Security Architecture" style="text;html=1;fontSize=24;fontStyle=1;fillColor=none;align=center;verticalAlign=middle;fontColor=#1B365D;" vertex="1" parent="1">
+          <mxGeometry x="400" y="20" width="1200" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="Enterprise Security Layers -- Defense in Depth" style="text;html=1;fontSize=13;fillColor=none;align=center;verticalAlign=middle;fontColor=#666666;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="500" y="55" width="1000" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== OUTER BOUNDARY: INTERNET ========== -->
+        <mxCell id="internet-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=none;strokeColor=#B71C1C;strokeWidth=3;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="90" width="2120" height="1420" as="geometry"/>
+        </mxCell>
+        <mxCell id="internet-label" value="INTERNET BOUNDARY" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#FFCDD2;fontColor=#B71C1C;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="50" y="95" width="200" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== LAYER 1: AUTHENTICATION ========== -->
+        <mxCell id="auth-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="80" y="140" width="2040" height="220" as="geometry"/>
+        </mxCell>
+        <mxCell id="auth-label" value="LAYER 1: AUTHENTICATION &amp; IDENTITY" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#2E7D32;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="90" y="145" width="340" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- Auth nodes -->
+        <mxCell id="user-browser" value="Developer&#xa;Browser" style="shape=actor;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#FFFFFF;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="130" y="200" width="80" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="ssl-1" value="TLS 1.3&#xa;HTTPS" style="shape=hexagon;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;fontStyle=1;size=0.15;" vertex="1" parent="1">
+          <mxGeometry x="270" y="210" width="100" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="azure-ad" value="Azure AD (Entra ID)&#xa;---&#xa;OAuth 2.0 / OIDC&#xa;App Registration:&#xa;  client_id: mule-migrator&#xa;  redirect_uri: SWA URL&#xa;  scopes: openid, profile, email&#xa;---&#xa;Token: JWT (RS256)&#xa;Expiry: 1 hour&#xa;Refresh: 24 hours" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="430" y="180" width="240" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="swa-auth" value="SWA Built-in Auth&#xa;---&#xa;/.auth/login/aad&#xa;/.auth/me (user info)&#xa;/.auth/logout&#xa;---&#xa;Session cookie (HttpOnly)&#xa;Secure + SameSite=Strict&#xa;Auto token refresh" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="730" y="180" width="220" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="managed-id" value="Managed Identity&#xa;(System-assigned)&#xa;---&#xa;NO API keys stored&#xa;NO secrets in code&#xa;---&#xa;Function App -&gt; PostgreSQL&#xa;Function App -&gt; Key Vault&#xa;Function App -&gt; OpenAI&#xa;Function App -&gt; Storage" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="180" width="220" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="keyvault" value="Azure Key Vault&#xa;---&#xa;Secrets stored:&#xa;  GITHUB_PAT&#xa;  DB_CONNECTION_STRING&#xa;  REDIS_KEY&#xa;---&#xa;Access: Managed Identity only&#xa;Soft delete enabled&#xa;Purge protection: ON" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="180" width="220" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="no-keys" value="ZERO API KEYS&#xa;in application code&#xa;or environment vars" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#2E7D32;strokeWidth=2;fontSize=11;fontStyle=1;fontColor=#1B5E20;" vertex="1" parent="1">
+          <mxGeometry x="1570" y="210" width="200" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Auth arrows -->
+        <mxCell id="aa1" value="HTTPS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;fontColor=#2E7D32;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="user-browser" target="ssl-1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="aa2" value="OAuth redirect" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;fontColor=#2E7D32;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="ssl-1" target="azure-ad" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="aa3" value="JWT token" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;fontColor=#2E7D32;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="azure-ad" target="swa-auth" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="aa4" value="Token exchange" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2E7D32;fontColor=#2E7D32;fontSize=9;fontStyle=1;strokeWidth=1;dashed=1;" edge="1" source="swa-auth" target="managed-id" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="aa5" value="Fetch secrets" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0070AD;fontColor=#0070AD;fontSize=9;fontStyle=1;strokeWidth=2;" edge="1" source="managed-id" target="keyvault" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ========== LAYER 2: NETWORK SECURITY ========== -->
+        <mxCell id="network-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E3F2FD;strokeColor=#0070AD;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="80" y="380" width="2040" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="network-label" value="LAYER 2: NETWORK SECURITY" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#0070AD;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="90" y="385" width="260" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- Network nodes -->
+        <mxCell id="vnet" value="Azure VNet&#xa;mulesoft-migrator-vnet&#xa;10.0.0.0/16&#xa;---&#xa;3 Subnets:&#xa;  app-subnet (10.0.1.0/24)&#xa;  db-subnet (10.0.2.0/24)&#xa;  cache-subnet (10.0.3.0/24)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="130" y="420" width="240" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="firewall" value="Firewall Rules&#xa;---&#xa;PostgreSQL:&#xa;  Allow app-subnet only&#xa;  Deny all public access&#xa;---&#xa;Redis:&#xa;  Private endpoint&#xa;  No public access&#xa;---&#xa;Storage:&#xa;  Service endpoint" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="420" y="420" width="200" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="private-dns" value="Private DNS Zones&#xa;---&#xa;privatelink.postgres.&#xa;  database.azure.com&#xa;privatelink.redis.&#xa;  cache.windows.net&#xa;---&#xa;Resolves to private IPs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="670" y="420" width="220" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="nsg" value="Network Security Groups&#xa;---&#xa;Inbound Rules:&#xa;  Allow HTTPS (443) from Any&#xa;  Allow Function App internal&#xa;  Deny all other inbound&#xa;---&#xa;Outbound Rules:&#xa;  Allow Azure services&#xa;  Allow OpenAI endpoint" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="940" y="420" width="230" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="cors" value="CORS Configuration&#xa;---&#xa;Allowed origins:&#xa;  https://*.azurestaticapps.net&#xa;  https://mule-migrator.com&#xa;---&#xa;Allowed methods:&#xa;  GET, POST, OPTIONS&#xa;---&#xa;Allowed headers:&#xa;  Authorization, Content-Type&#xa;---&#xa;Max age: 3600s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="420" width="220" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="ssl-enforce" value="SSL/TLS Enforcement&#xa;---&#xa;Min TLS version: 1.2&#xa;PostgreSQL: ssl_mode=require&#xa;Redis: TLS 1.2 required&#xa;SWA: HTTPS only&#xa;Function App: HTTPS only&#xa;---&#xa;Certificate: Azure managed" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0070AD;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1490" y="420" width="220" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== LAYER 3: APPLICATION SECURITY ========== -->
+        <mxCell id="app-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#FFF3E0;strokeColor=#E65100;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="80" y="600" width="2040" height="250" as="geometry"/>
+        </mxCell>
+        <mxCell id="app-label" value="LAYER 3: APPLICATION SECURITY" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#E65100;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="90" y="605" width="290" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- Application security nodes -->
+        <mxCell id="xxe" value="XXE Prevention&#xa;---&#xa;defusedxml library&#xa;Blocks:&#xa;  Entity expansion&#xa;  External entities&#xa;  DTD processing&#xa;  XInclude&#xa;---&#xa;Prevents XML bomb attacks&#xa;Prevents SSRF via XML" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="130" y="650" width="210" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="rate-limit" value="Rate Limiting (Redis)&#xa;---&#xa;Algorithm: Sliding window&#xa;---&#xa;Limits per user:&#xa;  /migrations: 10/min&#xa;  /rag/search: 30/min&#xa;  /download: 20/min&#xa;---&#xa;429 Too Many Requests&#xa;Retry-After header&#xa;Redis key: rate:{user}:{ep}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="390" y="650" width="220" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="input-val" value="Input Validation&#xa;---&#xa;XML file:&#xa;  Max size: 5MB&#xa;  Extension: .xml only&#xa;  Content-type check&#xa;  UTF-8 encoding only&#xa;---&#xa;Request body:&#xa;  JSON schema validation&#xa;  String length limits&#xa;  SQL injection prevention&#xa;  Path traversal prevention" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="660" y="650" width="220" height="190" as="geometry"/>
+        </mxCell>
+        <mxCell id="auth-middleware" value="Auth Middleware&#xa;---&#xa;Every API endpoint:&#xa;  1. Validate session cookie&#xa;  2. Extract user identity&#xa;  3. Check permissions&#xa;  4. Inject user_id&#xa;---&#xa;Exceptions:&#xa;  /api/health (public)&#xa;  /api/stats (public)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="930" y="650" width="210" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="error-handling" value="Secure Error Handling&#xa;---&#xa;Production mode:&#xa;  No stack traces&#xa;  No internal paths&#xa;  Generic error messages&#xa;---&#xa;Logging:&#xa;  Application Insights&#xa;  Structured JSON logs&#xa;  No PII in logs&#xa;  Request correlation IDs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1190" y="650" width="220" height="190" as="geometry"/>
+        </mxCell>
+        <mxCell id="dep-security" value="Dependency Security&#xa;---&#xa;pip audit: 0 vulnerabilities&#xa;npm audit: 0 vulnerabilities&#xa;---&#xa;Key packages:&#xa;  defusedxml (XXE safe)&#xa;  psycopg2 (parameterized)&#xa;  azure-identity (MI)&#xa;---&#xa;No eval() or exec()&#xa;No pickle deserialization" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="650" width="220" height="180" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== LAYER 4: DATA SECURITY ========== -->
+        <mxCell id="data-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#F3E5F5;strokeColor=#7B1FA2;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="80" y="870" width="2040" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="data-label" value="LAYER 4: DATA SECURITY &amp; PRIVACY" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#7B1FA2;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="90" y="875" width="310" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- Data security nodes -->
+        <mxCell id="encrypt-rest" value="Encryption at Rest&#xa;---&#xa;PostgreSQL:&#xa;  AES-256 (Azure managed)&#xa;Redis:&#xa;  AES-256 (Azure managed)&#xa;Storage:&#xa;  AES-256 (Azure managed)&#xa;Key Vault:&#xa;  HSM-backed keys" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="130" y="910" width="210" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="encrypt-transit" value="Encryption in Transit&#xa;---&#xa;All connections TLS 1.2+&#xa;---&#xa;Browser &lt;-&gt; SWA: HTTPS&#xa;SWA &lt;-&gt; Functions: HTTPS&#xa;Functions &lt;-&gt; PostgreSQL: SSL&#xa;Functions &lt;-&gt; Redis: TLS&#xa;Functions &lt;-&gt; OpenAI: HTTPS&#xa;Functions &lt;-&gt; Storage: HTTPS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="390" y="910" width="230" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="data-isolation" value="Data Isolation&#xa;---&#xa;Per-user data partitioning&#xa;user_id on all tables&#xa;Row-level filtering&#xa;---&#xa;User A cannot access&#xa;User B's migrations&#xa;---&#xa;Migration data auto-purge&#xa;after 30 days" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="670" y="910" width="210" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="ai-privacy" value="AI Data Privacy&#xa;---&#xa;Azure OpenAI:&#xa;  Data NOT used for training&#xa;  No data retention by MS&#xa;  Processed in Singapore&#xa;---&#xa;RAG knowledge:&#xa;  Public documentation only&#xa;  No customer code stored&#xa;  Embeddings are one-way" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="930" y="910" width="230" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="backup" value="Backup &amp; Recovery&#xa;---&#xa;PostgreSQL:&#xa;  Auto backup: 7 days&#xa;  Geo-redundant: No&#xa;  Point-in-time restore&#xa;---&#xa;Storage:&#xa;  LRS replication&#xa;  Soft delete: 7 days" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="910" width="210" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="compliance" value="Compliance&#xa;---&#xa;Azure SOC 2 Type II&#xa;ISO 27001 certified&#xa;GDPR compliant&#xa;---&#xa;No PII collection&#xa;  (only Azure AD identity)&#xa;No credit card data&#xa;Audit logs retained 90 days" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="910" width="210" height="150" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== LAYER 5: MONITORING ========== -->
+        <mxCell id="monitor-zone" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E0F2F1;strokeColor=#00695C;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="80" y="1090" width="2040" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="monitor-label" value="LAYER 5: MONITORING &amp; INCIDENT RESPONSE" style="text;html=1;fontSize=14;fontStyle=1;fillColor=#00695C;fontColor=#FFFFFF;rounded=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="90" y="1095" width="370" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="app-insights" value="Application Insights&#xa;---&#xa;Request tracing&#xa;Dependency tracking&#xa;Exception logging&#xa;Custom metrics&#xa;Live metrics stream" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00695C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="130" y="1130" width="200" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="log-analytics" value="Log Analytics Workspace&#xa;---&#xa;Centralized log store&#xa;KQL queries&#xa;Alert rules&#xa;30-day retention" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00695C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="380" y="1130" width="210" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="alerts" value="Security Alerts&#xa;---&#xa;Failed auth spike&#xa;Rate limit breaches&#xa;500 error rate &gt; 5%&#xa;Function timeout alerts&#xa;Anomaly detection" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00695C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="640" y="1130" width="200" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="audit-log" value="Audit Logging&#xa;---&#xa;Azure Activity Log&#xa;Sign-in logs (Entra ID)&#xa;Key Vault access logs&#xa;Resource change logs&#xa;Retained: 90 days" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00695C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="890" y="1130" width="200" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="health" value="Health Monitoring&#xa;---&#xa;GET /api/health&#xa;Checks: DB, Redis,&#xa;  OpenAI, Storage&#xa;Uptime monitoring&#xa;Status page" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#00695C;fontColor=#FFFFFF;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="1130" width="190" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== LEGEND ========== -->
+        <mxCell id="legend-box" value="" style="rounded=1;whiteSpace=wrap;fillColor=#FAFAFA;strokeColor=#9E9E9E;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="1280" width="800" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend-title" value="Legend" style="text;html=1;fontSize=13;fontStyle=1;fillColor=none;fontColor=#1B365D;" vertex="1" parent="1">
+          <mxGeometry x="90" y="1285" width="60" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg1" value="" style="rounded=1;fillColor=#2E7D32;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="100" y="1315" width="30" height="15" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg1t" value="Active Security Controls" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="135" y="1313" width="140" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg2" value="" style="rounded=1;fillColor=#0070AD;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="290" y="1315" width="30" height="15" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg2t" value="Azure Services" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="325" y="1313" width="100" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg3" value="" style="rounded=1;fillColor=#7B1FA2;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="440" y="1315" width="30" height="15" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg3t" value="Data Protection" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="475" y="1313" width="100" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg4" value="" style="rounded=1;fillColor=#00695C;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="590" y="1315" width="30" height="15" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg4t" value="Monitoring" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="625" y="1313" width="80" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg5" value="" style="rounded=1;fillColor=none;strokeColor=#B71C1C;strokeWidth=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="1345" width="30" height="15" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg5t" value="Security Boundary" style="text;html=1;fontSize=10;fillColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="135" y="1343" width="120" height="18" as="geometry"/>
+        </mxCell>
+
+        <!-- Security summary -->
+        <mxCell id="summary-box" value="" style="rounded=1;whiteSpace=wrap;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="950" y="1280" width="680" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="summary-title" value="Security Posture Summary" style="text;html=1;fontSize=13;fontStyle=1;fillColor=none;fontColor=#1B365D;" vertex="1" parent="1">
+          <mxGeometry x="960" y="1285" width="200" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="summary-text" value="Zero API keys in code | Managed Identity everywhere | XXE prevention | Rate limiting | TLS 1.2+ | Private endpoints | CORS enforcement | Input validation | Audit logging | 0 known vulnerabilities" style="text;html=1;fontSize=11;fillColor=none;fontColor=#1B5E20;align=left;spacingLeft=10;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="960" y="1310" width="660" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Branding -->
+        <mxCell id="brand" value="Capgemini Engineering | Mule Migrator Agentic AI Platform | Security Architecture v1.0" style="text;html=1;fontSize=10;fillColor=none;align=right;verticalAlign=middle;fontColor=#999999;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="1500" y="1400" width="600" height="20" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

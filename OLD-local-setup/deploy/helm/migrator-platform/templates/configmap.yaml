@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "migrator-platform.fullname" . }}-config
+  labels:
+    {{- include "migrator-platform.labels" . | nindent 4 }}
+data:
+  ENVIRONMENT: {{ .Values.config.environment | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  DEBUG: {{ .Values.config.debug | quote }}
+  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  UVICORN_WORKERS: {{ .Values.api.uvicornWorkers | quote }}
+
+  # ── Feature Flags ──────────────────────────────────────────────
+  AGENTS_ENABLED: {{ .Values.featureFlags.agentsEnabled | quote }}
+  RAG_ENABLED: {{ .Values.featureFlags.ragEnabled | quote }}
+
+  # ── LLM ────────────────────────────────────────────────────────
+  DEFAULT_LLM_PROVIDER: {{ .Values.llm.defaultProvider | quote }}
+  DEFAULT_LLM_MODEL: {{ .Values.llm.defaultModel | quote }}
+  LLM_MAX_TOKENS: {{ .Values.llm.maxTokens | quote }}
+  LLM_TEMPERATURE: {{ .Values.llm.temperature | quote }}
+  LLM_REQUEST_TIMEOUT: {{ .Values.llm.requestTimeout | quote }}
+  {{- if .Values.llm.ollamaUrl }}
+  OLLAMA_URL: {{ .Values.llm.ollamaUrl | quote }}
+  {{- end }}
+
+  # ── RAG ────────────────────────────────────────────────────────
+  EMBEDDING_MODEL: {{ .Values.rag.embeddingModel | quote }}
+  EMBEDDING_DIMENSION: {{ .Values.rag.embeddingDimension | quote }}
+  RAG_CHUNK_SIZE: {{ .Values.rag.chunkSize | quote }}
+  RAG_CHUNK_OVERLAP: {{ .Values.rag.chunkOverlap | quote }}
+  RAG_TOP_K: {{ .Values.rag.topK | quote }}
+  RAG_SCORE_THRESHOLD: {{ .Values.rag.scoreThreshold | quote }}
+
+  # ── Security ───────────────────────────────────────────────────
+  JWT_ALGORITHM: {{ .Values.security.jwtAlgorithm | quote }}
+  ACCESS_TOKEN_EXPIRE_MINUTES: {{ .Values.security.accessTokenExpireMinutes | quote }}
+  REFRESH_TOKEN_EXPIRE_DAYS: {{ .Values.security.refreshTokenExpireDays | quote }}
+  RATE_LIMIT_PER_MINUTE: {{ .Values.security.rateLimitPerMinute | quote }}
+  TRUSTED_HOSTS: {{ .Values.security.trustedHosts | quote }}
+
+  # ── Qdrant ─────────────────────────────────────────────────────
+  QDRANT_URL: "http://{{ include "migrator-platform.fullname" . }}-qdrant:{{ .Values.qdrant.port }}"
+  QDRANT_COLLECTION: {{ .Values.qdrant.collection | quote }}
+
+  # ── Database & Redis (non-secret portions) ─────────────────────
+  REDIS_URL: {{ include "migrator-platform.redisUrl" . | quote }}
+  CELERY_BROKER_URL: {{ include "migrator-platform.celeryBrokerUrl" . | quote }}
+  CELERY_RESULT_BACKEND: {{ include "migrator-platform.celeryBrokerUrl" . | quote }}

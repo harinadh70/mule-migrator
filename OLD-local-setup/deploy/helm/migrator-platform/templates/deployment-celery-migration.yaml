@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "migrator-platform.fullname" . }}-celery-migration
+  labels:
+    {{- include "migrator-platform.componentLabels" (dict "root" . "component" "celery-migration") | nindent 4 }}
+spec:
+  {{- if not .Values.celery.migration.autoscaling.enabled }}
+  replicas: {{ .Values.celery.migration.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "celery-migration") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "celery-migration") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "migrator-platform.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: celery-migration
+          image: {{ include "migrator-platform.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - api.tasks.celery_app
+            - worker
+            - --queues={{ .Values.celery.migration.queue }}
+            - --concurrency={{ .Values.celery.migration.concurrency }}
+            - --loglevel={{ .Values.config.logLevel }}
+            - --hostname=migration@%h
+            - --max-tasks-per-child={{ .Values.celery.migration.maxTasksPerChild }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "migrator-platform.fullname" . }}-config
+            - secretRef:
+                name: {{ include "migrator-platform.fullname" . }}-secrets
+          resources:
+            {{- toYaml .Values.celery.migration.resources | nindent 12 }}
+          volumeMounts:
+            - name: model-cache
+              mountPath: /home/appuser/.cache
+      volumes:
+        - name: model-cache
+          emptyDir: {}

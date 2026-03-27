@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}GitHub Integration — MuleSoft to Spring Boot Migrator{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/github.css">
+{% endblock %}
+
+{% block page_header %}
+<div class="page-header-bar">
+    <div class="page-title-section">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="color:var(--text-secondary)">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        <h1>GitHub Integration</h1>
+        <span class="page-badge">Source Control</span>
+    </div>
+    <div class="page-actions">
+        <button class="btn btn-ghost btn-sm" onclick="refreshRepos()" id="btnRefresh" title="Refresh repositories" style="display:none">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+            </svg>
+            Refresh
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="github-page">
+
+    <!-- ── Connect Section ──────────────────────────────────── -->
+    <div class="connect-section card" id="connectSection">
+        <div class="connect-inner">
+            <div class="connect-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                </svg>
+            </div>
+            <div class="connect-fields" id="connectForm">
+                <div class="token-row">
+                    <div class="form-group" style="margin:0;flex:1">
+                        <label for="githubToken">Personal Access Token</label>
+                        <input type="password" id="githubToken" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                               autocomplete="off" spellcheck="false">
+                        <div class="form-hint">
+                            Requires <code>repo</code>, <code>read:org</code> scopes.
+                            <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener" class="hint-link">Generate token</a>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="btnConnect" onclick="connectGitHub()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                            <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>
+                        </svg>
+                        Connect
+                    </button>
+                </div>
+            </div>
+
+            <!-- Connected user info (hidden until connected) -->
+            <div class="connected-user" id="connectedUser" style="display:none">
+                <img class="user-avatar" id="userAvatar" src="" alt="">
+                <div class="user-info">
+                    <div class="user-name" id="userName"></div>
+                    <div class="user-login" id="userLogin"></div>
+                </div>
+                <span class="badge badge-success" style="margin-left:4px">Connected</span>
+                <button class="btn btn-ghost btn-sm" onclick="disconnectGitHub()" style="margin-left:auto">
+                    Disconnect
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Main Two-Column Layout ───────────────────────────── -->
+    <div class="github-columns" id="githubColumns" style="display:none">
+
+        <!-- ── Left: Org + Repo Browser ─────────────────────── -->
+        <div class="col-repos">
+            <div class="card repo-browser-card">
+                <div class="card-header" style="margin-bottom:12px">
+                    <div class="card-title">Repositories</div>
+                    <div class="org-selector-wrap">
+                        <label class="sr-only" for="orgSelector">Organization</label>
+                        <select id="orgSelector" class="org-select" onchange="onOrgChange()">
+                            <option value="">Your repos</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="repo-search-wrap">
+                    <svg class="repo-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <input type="text" id="repoSearch" class="repo-search-input" placeholder="Filter repositories…" oninput="filterRepos()">
+                </div>
+
+                <div class="repo-list" id="repoList">
+                    <div class="empty-state">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 3l18 18M10.29 10.29A3 3 0 1013.71 13.71M21 21H3"/>
+                        </svg>
+                        <p>No repositories loaded</p>
+                    </div>
+                </div>
+
+                <div class="repo-footer" id="repoFooter" style="display:none">
+                    <span class="repo-count" id="repoCount"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Right: Action Panel ───────────────────────────── -->
+        <div class="col-actions">
+
+            <!-- Selected Repo Context -->
+            <div class="selected-repo-banner" id="selectedRepoBanner" style="display:none">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 3l18 18M10.29 10.29A3 3 0 1013.71 13.71M21 21H3"/>
+                </svg>
+                <span id="selectedRepoLabel">No repository selected</span>
+                <button class="btn btn-ghost btn-sm" onclick="clearSelectedRepo()" style="margin-left:auto;padding:2px 6px">
+                    &times;
+                </button>
+            </div>
+
+            <!-- Push Migration Results -->
+            <div class="card action-card-panel">
+                <div class="action-panel-header">
+                    <div class="action-panel-icon" style="background:var(--accent-light)">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-hover)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/>
+                            <path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <div class="action-panel-title">Push Migration Results</div>
+                        <div class="action-panel-sub" id="pushSubtitle">Select a repository and run a migration first</div>
+                    </div>
+                </div>
+
+                <div class="migration-status-row" id="migrationStatusRow">
+                    <span class="badge" id="migrationBadge">No migration</span>
+                    <span class="migration-file-count" id="migrationFileCount"></span>
+                </div>
+
+                <div class="form-group">
+                    <label for="pushBranch">Target Branch</label>
+                    <select id="pushBranch">
+                        <option value="main">main</option>
+                        <option value="master">master</option>
+                        <option value="develop">develop</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="commitMessage">Commit Message</label>
+                    <input type="text" id="commitMessage"
+                           value="chore: add Spring Boot migration output"
+                           placeholder="Enter commit message…">
+                </div>
+
+                <button class="btn btn-primary btn-push" id="btnPush" onclick="pushMigration()" disabled>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/>
+                        <path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3"/>
+                    </svg>
+                    Push to GitHub
+                </button>
+            </div>
+
+            <!-- Create New Repository -->
+            <div class="card action-card-panel">
+                <div class="action-panel-header">
+                    <div class="action-panel-icon" style="background:var(--success-bg)">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <div class="action-panel-title">Create New Repository</div>
+                        <div class="action-panel-sub">Initialize a new GitHub repository</div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm collapsible-toggle" onclick="toggleSection('createRepoBody', this)" style="margin-left:auto">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                            <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                    </button>
+                </div>
+                <div id="createRepoBody" class="collapsible-body">
+                    <div class="form-group">
+                        <label for="newRepoOrg">Owner / Organization</label>
+                        <select id="newRepoOrg">
+                            <option value="">Your account</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="newRepoName">Repository Name</label>
+                        <input type="text" id="newRepoName" placeholder="my-spring-boot-app">
+                    </div>
+                    <div class="form-group">
+                        <label for="newRepoDesc">Description <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+                        <input type="text" id="newRepoDesc" placeholder="Migrated from MuleSoft">
+                    </div>
+                    <div class="form-group">
+                        <label>Visibility</label>
+                        <div class="visibility-toggle-row">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="newRepoPrivate">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span class="toggle-label" id="visibilityLabel">Public</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-success" onclick="createRepo()" id="btnCreateRepo">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        Create Repository
+                    </button>
+                </div>
+            </div>
+
+            <!-- Create Branch -->
+            <div class="card action-card-panel">
+                <div class="action-panel-header">
+                    <div class="action-panel-icon" style="background:var(--info-bg)">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
+                            <path d="M18 9a9 9 0 01-9 9"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <div class="action-panel-title">Create Branch</div>
+                        <div class="action-panel-sub">Branch from an existing ref in the selected repo</div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm collapsible-toggle" onclick="toggleSection('createBranchBody', this)" style="margin-left:auto">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                            <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                    </button>
+                </div>
+                <div id="createBranchBody" class="collapsible-body">
+                    <div class="no-repo-msg" id="noBranchRepoMsg">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                        Select a repository from the list to create a branch.
+                    </div>
+                    <div id="branchFormFields" style="display:none">
+                        <div class="form-group">
+                            <label for="sourceBranch">Source Branch</label>
+                            <select id="sourceBranch">
+                                <option value="main">main</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="newBranchName">New Branch Name</label>
+                            <input type="text" id="newBranchName" placeholder="feature/spring-migration">
+                        </div>
+                        <button class="btn btn-info" onclick="createBranch()" id="btnCreateBranch">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                                <line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
+                                <path d="M18 9a9 9 0 01-9 9"/>
+                            </svg>
+                            Create Branch
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /col-actions -->
+    </div><!-- /github-columns -->
+
+</div><!-- /github-page -->
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/github.js"></script>
+{% endblock %}

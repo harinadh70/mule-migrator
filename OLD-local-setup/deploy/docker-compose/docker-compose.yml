@@ -1,0 +1,301 @@
+# =================================================================
+#  MuleSoft-to-SpringBoot Agentic AI Platform — Production Stack
+#
+#  Usage:
+#    docker compose up -d
+#    docker compose logs -f api
+#    docker compose down -v   # tear down with volumes
+# =================================================================
+
+x-common-env: &common-env
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-migrator}:${POSTGRES_PASSWORD:-migrator_secret}@postgres:5432/${POSTGRES_DB:-migrator}
+  REDIS_URL: redis://redis:6379/${REDIS_DB:-0}
+  QDRANT_URL: http://qdrant:6333
+  SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+  QDRANT_COLLECTION: ${QDRANT_COLLECTION:-mulesoft_knowledge}
+  RAG_ENABLED: ${RAG_ENABLED:-true}
+  AGENTS_ENABLED: ${AGENTS_ENABLED:-true}
+  CORS_ORIGINS: ${CORS_ORIGINS:-*}
+
+x-celery-base: &celery-base
+  build:
+    context: ../../
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  environment:
+    <<: *common-env
+    CELERY_BROKER_URL: redis://redis:6379/${REDIS_CELERY_DB:-1}
+    CELERY_RESULT_BACKEND: redis://redis:6379/${REDIS_CELERY_DB:-1}
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+  networks:
+    - migrator-net
+
+services:
+  # ── FastAPI Application ──────────────────────────────────────
+  api:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    container_name: migrator-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      <<: *common-env
+      CELERY_BROKER_URL: redis://redis:6379/${REDIS_CELERY_DB:-1}
+      CELERY_RESULT_BACKEND: redis://redis:6379/${REDIS_CELERY_DB:-1}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-4}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+    volumes:
+      - api-tmp:/tmp
+      - model-cache:/home/appuser/.cache
+    networks:
+      - migrator-net
+
+  # ── Celery Workers ───────────────────────────────────────────
+  celery-migration-worker:
+    <<: *celery-base
+    container_name: migrator-celery-migration
+    command: >
+      celery -A api.tasks.celery_app worker
+      --queues=migration
+      --concurrency=${CELERY_MIGRATION_CONCURRENCY:-2}
+      --loglevel=${LOG_LEVEL:-info}
+      --hostname=migration@%h
+      --max-tasks-per-child=50
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    volumes:
+      - model-cache:/home/appuser/.cache
+
+  celery-build-worker:
+    <<: *celery-base
+    container_name: migrator-celery-build
+    command: >
+      celery -A api.tasks.celery_app worker
+      --queues=build
+      --concurrency=${CELERY_BUILD_CONCURRENCY:-2}
+      --loglevel=${LOG_LEVEL:-info}
+      --hostname=build@%h
+      --max-tasks-per-child=100
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  celery-indexing-worker:
+    <<: *celery-base
+    container_name: migrator-celery-indexing
+    command: >
+      celery -A api.tasks.celery_app worker
+      --queues=indexing
+      --concurrency=${CELERY_INDEXING_CONCURRENCY:-1}
+      --loglevel=${LOG_LEVEL:-info}
+      --hostname=indexing@%h
+      --max-tasks-per-child=20
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+    volumes:
+      - model-cache:/home/appuser/.cache
+
+  celery-beat:
+    <<: *celery-base
+    container_name: migrator-celery-beat
+    command: >
+      celery -A api.tasks.celery_app beat
+      --loglevel=${LOG_LEVEL:-info}
+      --schedule=/tmp/celerybeat-schedule
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+
+  # ── PostgreSQL ───────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: migrator-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-migrator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-migrator_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-migrator}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-migrator} -d ${POSTGRES_DB:-migrator}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    networks:
+      - migrator-net
+
+  # ── Redis ────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: migrator-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory ${REDIS_MAXMEMORY:-256mb}
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    networks:
+      - migrator-net
+
+  # ── Qdrant Vector Store ──────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: migrator-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__STORAGE__STORAGE_PATH: /qdrant/storage
+      QDRANT__STORAGE__SNAPSHOTS_PATH: /qdrant/snapshots
+    volumes:
+      - qdrant-data:/qdrant/storage
+      - qdrant-snapshots:/qdrant/snapshots
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+    networks:
+      - migrator-net
+
+  # ── Nginx Reverse Proxy ──────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: migrator-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ../../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../nginx/certs:/etc/nginx/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    networks:
+      - migrator-net
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  qdrant-data:
+    driver: local
+  qdrant-snapshots:
+    driver: local
+  api-tmp:
+    driver: local
+  model-cache:
+    driver: local
+
+networks:
+  migrator-net:
+    driver: bridge
+    name: migrator-network

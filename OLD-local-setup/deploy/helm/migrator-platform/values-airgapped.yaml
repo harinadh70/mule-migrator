@@ -1,0 +1,68 @@
+# =================================================================
+#  Air-Gapped Environment Overrides
+# =================================================================
+
+global:
+  imageRegistry: registry.internal.local:5000
+
+# ── Use local registry for all images ────────────────────────────
+image:
+  registry: registry.internal.local:5000
+  repository: mulesoft-to-springboot-migrator
+  pullPolicy: IfNotPresent
+
+# ── Qdrant from local registry ───────────────────────────────────
+qdrant:
+  image:
+    registry: registry.internal.local:5000
+    repository: qdrant/qdrant
+    pullPolicy: IfNotPresent
+
+# ── PostgreSQL from local registry ───────────────────────────────
+postgresql:
+  global:
+    imageRegistry: registry.internal.local:5000
+  image:
+    registry: registry.internal.local:5000
+
+# ── Redis from local registry ───────────────────────────────────
+redis:
+  global:
+    imageRegistry: registry.internal.local:5000
+  image:
+    registry: registry.internal.local:5000
+
+# ── Disable external LLM providers; use local Ollama ─────────────
+llm:
+  defaultProvider: ollama
+  defaultModel: codellama:34b
+  ollamaUrl: http://ollama.internal.local:11434
+
+secrets:
+  anthropicApiKey: ""
+  openaiApiKey: ""
+  googleApiKey: ""
+  deepseekApiKey: ""
+  groqApiKey: ""
+
+# ── RAG uses a pre-loaded model and snapshot ─────────────────────
+rag:
+  embeddingModel: all-MiniLM-L6-v2
+  # Model files are baked into the image; no download required.
+
+featureFlags:
+  agentsEnabled: true
+  ragEnabled: true
+
+# ── Ingress ── use internal hostname ─────────────────────────────
+ingress:
+  enabled: true
+  hosts:
+    - host: migrator.internal.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: migrator-tls
+      hosts:
+        - migrator.internal.local

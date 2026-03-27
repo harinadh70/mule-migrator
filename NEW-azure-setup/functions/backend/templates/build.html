@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% block title %}Build &amp; Test — MuleSoft to Spring Boot Migrator{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/build.css">
+{% endblock %}
+
+{% block page_header %}
+<div class="page-header-bar">
+    <div class="page-title-section">
+        <span class="nav-icon" style="width:24px;height:24px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="6" width="20" height="12" rx="2"/>
+                <line x1="6" y1="12" x2="6" y2="12"/>
+                <line x1="10" y1="12" x2="10" y2="12"/>
+                <line x1="14" y1="12" x2="14" y2="12"/>
+            </svg>
+        </span>
+        <h1>Build &amp; Test</h1>
+        <span class="page-badge">Builder</span>
+    </div>
+    <div class="page-actions">
+        <button class="btn btn-sm" id="checkPrereqsBtn" title="Check system prerequisites">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 12l2 2 4-4"/>
+                <path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9c2.12 0 4.07.74 5.61 1.97"/>
+            </svg>
+            Check Prerequisites
+        </button>
+        <button class="btn btn-sm btn-ghost" id="clearTerminalBtn" title="Clear terminal output">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+            </svg>
+            Clear Output
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="build-page">
+
+    <!-- No Migration Data Warning -->
+    <div class="no-migration-banner" id="noMigrationBanner" style="display:none;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <span>No migration output found. <a href="/migrate">Run a migration</a> first to generate Spring Boot source files before building.</span>
+    </div>
+
+    <!-- Prerequisites Section -->
+    <div>
+        <div class="section-label">Prerequisites</div>
+        <div class="prereqs-card">
+            <div class="prereqs-header">
+                <div class="prereqs-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 12l2 2 4-4"/>
+                        <path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9c2.12 0 4.07.74 5.61 1.97"/>
+                    </svg>
+                    System Requirements
+                </div>
+            </div>
+
+            <div class="prereqs-grid">
+                <!-- Java -->
+                <div class="prereq-item status-unknown" data-tool="java">
+                    <div class="prereq-indicator"></div>
+                    <div class="prereq-info">
+                        <div class="prereq-name">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px;">
+                                <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                            </svg>
+                            Java JDK
+                        </div>
+                        <div class="prereq-version">Not checked</div>
+                    </div>
+                </div>
+
+                <!-- Maven -->
+                <div class="prereq-item status-unknown" data-tool="maven">
+                    <div class="prereq-indicator"></div>
+                    <div class="prereq-info">
+                        <div class="prereq-name">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px;">
+                                <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+                            </svg>
+                            Apache Maven
+                        </div>
+                        <div class="prereq-version">Not checked</div>
+                    </div>
+                </div>
+
+                <!-- Docker -->
+                <div class="prereq-item status-unknown" data-tool="docker">
+                    <div class="prereq-indicator"></div>
+                    <div class="prereq-info">
+                        <div class="prereq-name">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px;">
+                                <rect x="2" y="8" width="4" height="4" rx="1"/><rect x="7" y="8" width="4" height="4" rx="1"/><rect x="12" y="8" width="4" height="4" rx="1"/><rect x="7" y="3" width="4" height="4" rx="1"/><path d="M18.5 8c1.9 0 3.5 1.6 3.5 3.5v0c0 2-1.6 3.5-3.5 3.5H16V8h2.5z"/>
+                            </svg>
+                            Docker
+                        </div>
+                        <div class="prereq-version">Not checked</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Build Actions Section -->
+    <div>
+        <div class="section-label">Build Actions</div>
+        <div class="build-actions-grid" id="buildActionsGrid">
+
+            <!-- Build JAR -->
+            <div class="build-card" id="cardJar">
+                <div class="build-card-header">
+                    <div class="build-card-icon icon-jar">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                        </svg>
+                    </div>
+                    <div class="build-card-meta">
+                        <div class="build-card-title">Build JAR</div>
+                        <div class="build-card-desc">Package as an executable JAR using <code>mvn package</code>. Suitable for standalone deployment.</div>
+                    </div>
+                </div>
+                <div class="build-card-btn">
+                    <button class="btn btn-primary build-action-btn" id="buildJarBtn" data-type="jar">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        Build JAR
+                    </button>
+                </div>
+            </div>
+
+            <!-- Build WAR -->
+            <div class="build-card" id="cardWar">
+                <div class="build-card-header">
+                    <div class="build-card-icon icon-war">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
+                            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                            <line x1="12" y1="22.08" x2="12" y2="12"/>
+                        </svg>
+                    </div>
+                    <div class="build-card-meta">
+                        <div class="build-card-title">Build WAR</div>
+                        <div class="build-card-desc">Package as a WAR archive for deployment to servlet containers such as Tomcat or WildFly.</div>
+                    </div>
+                </div>
+                <div class="build-card-btn">
+                    <button class="btn build-action-btn btn-war" id="buildWarBtn" data-type="war">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        Build WAR
+                    </button>
+                </div>
+            </div>
+
+            <!-- Build Docker Image -->
+            <div class="build-card" id="cardDocker">
+                <div class="build-card-header">
+                    <div class="build-card-icon icon-docker">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="8" width="4" height="4" rx="1"/>
+                            <rect x="7" y="8" width="4" height="4" rx="1"/>
+                            <rect x="12" y="8" width="4" height="4" rx="1"/>
+                            <rect x="7" y="3" width="4" height="4" rx="1"/>
+                            <path d="M18.5 8c1.9 0 3.5 1.6 3.5 3.5v0c0 2-1.6 3.5-3.5 3.5H16V8h2.5z"/>
+                        </svg>
+                    </div>
+                    <div class="build-card-meta">
+                        <div class="build-card-title">Build Docker Image</div>
+                        <div class="build-card-desc">Build a containerised image using a generated Dockerfile.</div>
+                    </div>
+                </div>
+
+                <!-- Platform selector -->
+                <div class="platform-selector-group">
+                    <label for="dockerPlatformSelect">Target Platform</label>
+                    <select class="platform-select" id="dockerPlatformSelect">
+                        <option value="linux/amd64">Linux (x86_64)</option>
+                        <option value="ubuntu">Ubuntu</option>
+                        <option value="redhat/ubi9">Red Hat (UBI9)</option>
+                        <option value="linux/arm64">macOS (Apple Silicon)</option>
+                        <option value="windows/amd64">Windows Server</option>
+                    </select>
+                </div>
+
+                <div class="build-card-btn">
+                    <button class="btn build-action-btn btn-docker" id="buildDockerBtn" data-type="docker">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        Build Image
+                    </button>
+                </div>
+            </div>
+
+            <!-- Run Tests -->
+            <div class="build-card" id="cardTest">
+                <div class="build-card-header">
+                    <div class="build-card-icon icon-test">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14.5 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7.5L14.5 2z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <path d="M9 15l2 2 4-4"/>
+                        </svg>
+                    </div>
+                    <div class="build-card-meta">
+                        <div class="build-card-title">Run Tests</div>
+                        <div class="build-card-desc">Execute the full test suite using <code>mvn test</code> and stream results in real time.</div>
+                    </div>
+                </div>
+                <div class="build-card-btn">
+                    <button class="btn btn-success build-action-btn" id="runTestsBtn" data-type="test">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        Run Tests
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Terminal Output Section -->
+    <div>
+        <div class="section-label">Build Output</div>
+        <div class="terminal-panel">
+
+            <!-- Terminal header -->
+            <div class="terminal-header">
+                <div class="terminal-title">
+                    <div class="terminal-dots">
+                        <div class="terminal-dot"></div>
+                        <div class="terminal-dot"></div>
+                        <div class="terminal-dot"></div>
+                    </div>
+                    <span>Build Output</span>
+                </div>
+                <div class="terminal-controls">
+                    <span class="build-status-badge status-idle" id="buildStatusBadge">Idle</span>
+                </div>
+            </div>
+
+            <!-- Terminal body -->
+            <div class="terminal-body" id="terminalBody" role="log" aria-live="polite" aria-label="Build output">
+                <div class="term-empty">No build output yet — trigger a build or run tests to see output here.</div>
+            </div>
+
+            <!-- Terminal footer with artifact download -->
+            <div class="terminal-footer">
+                <span class="terminal-stats" id="terminalStats"></span>
+                <div class="download-btn-wrap">
+                    <span class="artifact-info" id="artifactInfo"></span>
+                    <button class="btn btn-sm btn-success download-artifact-btn" id="downloadArtifactBtn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        Download Artifact
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/build.js"></script>
+{% endblock %}

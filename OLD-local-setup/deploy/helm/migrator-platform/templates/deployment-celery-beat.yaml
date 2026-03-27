@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "migrator-platform.fullname" . }}-celery-beat
+  labels:
+    {{- include "migrator-platform.componentLabels" (dict "root" . "component" "celery-beat") | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "celery-beat") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "migrator-platform.componentSelectorLabels" (dict "root" . "component" "celery-beat") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "migrator-platform.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: celery-beat
+          image: {{ include "migrator-platform.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - celery
+            - -A
+            - api.tasks.celery_app
+            - beat
+            - --loglevel={{ .Values.config.logLevel }}
+            - --schedule=/tmp/celerybeat-schedule
+          envFrom:
+            - configMapRef:
+                name: {{ include "migrator-platform.fullname" . }}-config
+            - secretRef:
+                name: {{ include "migrator-platform.fullname" . }}-secrets
+          resources:
+            {{- toYaml .Values.celery.beat.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

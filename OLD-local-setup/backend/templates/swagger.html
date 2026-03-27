@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Swagger / OpenAPI — MuleSoft to Spring Boot Migrator{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+<link rel="stylesheet" href="/static/css/swagger.css">
+{% endblock %}
+
+{% block page_header %}
+<div class="page-header-bar">
+    <div class="page-title-section">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+        </svg>
+        <h1>Swagger / OpenAPI</h1>
+        <span class="page-badge">Generator</span>
+    </div>
+    <div class="page-actions">
+        <button class="btn btn-sm btn-ghost" onclick="downloadSpec('yaml')" id="downloadYamlHeaderBtn" disabled title="Download as YAML">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download YAML
+        </button>
+        <button class="btn btn-sm btn-ghost" onclick="downloadSpec('json')" id="downloadJsonHeaderBtn" disabled title="Download as JSON">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download JSON
+        </button>
+        <button class="btn btn-sm btn-ghost" onclick="copySpec()" id="copyHeaderBtn" disabled title="Copy spec to clipboard">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px">
+                <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            </svg>
+            Copy
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="swagger-layout">
+    <!-- Left Panel: Input -->
+    <div class="panel input-panel">
+        <div class="panel-header">
+            <div class="panel-tabs">
+                <button class="tab active" data-tab="xml" onclick="switchSwaggerTab(this)">XML</button>
+                <button class="tab" data-tab="raml" onclick="switchSwaggerTab(this)">RAML</button>
+                <button class="tab" data-tab="migration" onclick="switchSwaggerTab(this)">From Migration</button>
+            </div>
+        </div>
+
+        <!-- XML Tab -->
+        <div class="tab-content active" id="tab-xml">
+            <div class="input-hint">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                Paste your MuleSoft XML configuration below. HTTP listeners and flows will be extracted.
+            </div>
+            <textarea id="xmlEditor" class="swagger-input-editor" placeholder="&lt;mule xmlns=&quot;http://www.mulesoft.org/schema/mule/core&quot;&gt;&#10;  &lt;http:listener-config name=&quot;HTTP_Listener_config&quot;&gt;&#10;    &lt;http:listener-connection host=&quot;0.0.0.0&quot; port=&quot;8081&quot;/&gt;&#10;  &lt;/http:listener-config&gt;&#10;&#10;  &lt;flow name=&quot;get-usersFlow&quot;&gt;&#10;    &lt;http:listener config-ref=&quot;HTTP_Listener_config&quot; path=&quot;/users&quot; allowedMethods=&quot;GET&quot;/&gt;&#10;    &lt;set-payload value=&quot;...&quot;/&gt;&#10;  &lt;/flow&gt;&#10;&lt;/mule&gt;"></textarea>
+            <div class="input-footer">
+                <div class="form-inline">
+                    <label for="xmlProjectName">Project Name</label>
+                    <input type="text" id="xmlProjectName" placeholder="my-api" value="my-api">
+                </div>
+                <button class="btn btn-sm generate-btn" onclick="generateFromXml()">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    Generate
+                </button>
+            </div>
+        </div>
+
+        <!-- RAML Tab -->
+        <div class="tab-content" id="tab-raml">
+            <div class="input-hint">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                Paste your RAML 0.8 or 1.0 API definition below.
+            </div>
+            <textarea id="ramlEditor" class="swagger-input-editor" placeholder="#%RAML 1.0&#10;title: My API&#10;version: v1&#10;baseUri: https://api.example.com/{version}&#10;&#10;/users:&#10;  get:&#10;    description: Returns a list of users&#10;    responses:&#10;      200:&#10;        body:&#10;          application/json:&#10;            example: |&#10;              [{&quot;id&quot;: 1, &quot;name&quot;: &quot;Alice&quot;}]"></textarea>
+            <div class="input-footer">
+                <div></div>
+                <button class="btn btn-sm generate-btn" onclick="generateFromRaml()">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    Generate
+                </button>
+            </div>
+        </div>
+
+        <!-- From Migration Tab -->
+        <div class="tab-content" id="tab-migration">
+            <div class="migration-tab-body" id="migrationTabBody">
+                <div class="empty-state" id="migrationEmptyState">
+                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                        <rect x="6" y="6" width="36" height="36" rx="6" stroke="var(--text-muted)" stroke-width="1.5" fill="none" stroke-dasharray="4 3"/>
+                        <path d="M18 24h12M24 18v12" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
+                    <p>No migration data available</p>
+                    <p class="empty-state-sub">Run a migration on the <a href="/migrate">Migration</a> page first, then return here to generate an OpenAPI spec from the result.</p>
+                </div>
+                <div class="migration-available" id="migrationAvailable" style="display:none">
+                    <div class="migration-info-card">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--success);flex-shrink:0">
+                            <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
+                            <polyline points="22 4 12 14.01 9 11.01"/>
+                        </svg>
+                        <div>
+                            <strong>Migration data found</strong>
+                            <p>A previous migration result is available in local storage. Click below to generate an OpenAPI specification from it.</p>
+                        </div>
+                    </div>
+                    <button class="btn btn-sm generate-btn" onclick="loadFromMigration()" style="align-self:flex-start">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px">
+                            <polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>
+                        </svg>
+                        Generate from Migration
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Resizable Divider -->
+    <div class="panel-divider" id="swaggerPanelDivider"></div>
+
+    <!-- Right Panel: Output -->
+    <div class="panel output-panel">
+        <div class="panel-header">
+            <span class="panel-header-title">Generated OpenAPI Spec</span>
+            <div class="header-btn-group">
+                <button class="btn btn-sm btn-ghost" onclick="copySpec()" id="copySpecBtn" disabled title="Copy YAML to clipboard">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    Copy
+                </button>
+                <button class="btn btn-sm btn-ghost" onclick="downloadSpec('yaml')" id="downloadYamlBtn" disabled>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    YAML
+                </button>
+                <button class="btn btn-sm btn-success download-btn" onclick="downloadSpec('json')" id="downloadJsonBtn" disabled>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    JSON
+                </button>
+            </div>
+        </div>
+
+        <div class="spec-output-wrapper" id="specOutputWrapper">
+            <div class="empty-state" id="specEmptyState">
+                <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+                    <rect x="10" y="4" width="32" height="44" rx="4" stroke="#6366f1" stroke-width="1.5" fill="none"/>
+                    <path d="M18 14H34M18 22H30M18 30H26" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"/>
+                    <circle cx="38" cy="38" r="10" fill="#1e293b" stroke="#6366f1" stroke-width="1.5"/>
+                    <path d="M34 38l3 3 5-5" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <p>Paste input on the left and click <strong>Generate</strong></p>
+                <p style="font-size:12px;color:var(--text-muted)">The OpenAPI 3.0 specification will appear here with syntax highlighting</p>
+            </div>
+            <div id="specEditor" class="spec-editor-container" style="display:none"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
+<script src="/static/js/swagger.js"></script>
+{% endblock %}

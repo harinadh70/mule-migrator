@@ -140,8 +140,15 @@ class SpringBootGenerator:
         # ── Test classes ───────────────────────────────────────────────
         files[f"src/test/java/{self.package_path}/{app_class}Tests.java"] = \
             self._generate_test_class(app_class)
+
+        # Controller unit tests (@WebMvcTest)
         controller_test_files = self._generate_controller_tests(spring_files)
         for rel_path, content in controller_test_files.items():
+            files[f"src/test/java/{self.package_path}/{rel_path}"] = content
+
+        # Controller integration tests (@SpringBootTest)
+        integration_test_files = self._generate_integration_tests(spring_files)
+        for rel_path, content in integration_test_files.items():
             files[f"src/test/java/{self.package_path}/{rel_path}"] = content
 
         # ── Dockerfile ────────────────────────────────────────────────
@@ -740,16 +747,32 @@ build/
     def _generate_test_class(self, app_class):
         return (
             f"package {self.group_id};\n\n"
+            f"import org.junit.jupiter.api.DisplayName;\n"
             f"import org.junit.jupiter.api.Test;\n"
+            f"import org.springframework.beans.factory.annotation.Autowired;\n"
             f"import org.springframework.boot.test.context.SpringBootTest;\n"
-            f"import static org.junit.jupiter.api.Assertions.assertNotNull;\n\n"
+            f"import org.springframework.context.ApplicationContext;\n\n"
+            f"import static org.junit.jupiter.api.Assertions.assertNotNull;\n"
+            f"import static org.junit.jupiter.api.Assertions.assertTrue;\n\n"
             f"@SpringBootTest\n"
+            f"@DisplayName(\"{app_class} - Application Context Tests\")\n"
             f"class {app_class}Tests {{\n\n"
+            f"    @Autowired\n"
+            f"    private ApplicationContext applicationContext;\n\n"
             f"    @Test\n"
+            f"    @DisplayName(\"Application context should load successfully\")\n"
             f"    void contextLoads() {{\n"
-            f"        // Verifies that the Spring application context starts successfully\n"
+            f"        // Verifies that the Spring application context starts without errors\n"
+            f"        assertNotNull(applicationContext, \"Application context should not be null\");\n"
             f"    }}\n\n"
             f"    @Test\n"
+            f"    @DisplayName(\"Application context should contain expected beans\")\n"
+            f"    void contextContainsBeans() {{\n"
+            f"        assertTrue(applicationContext.getBeanDefinitionCount() > 0,\n"
+            f"                \"Application context should contain bean definitions\");\n"
+            f"    }}\n\n"
+            f"    @Test\n"
+            f"    @DisplayName(\"Main method should run without throwing\")\n"
             f"    void mainMethodRuns() {{\n"
             f"        // Smoke test to ensure main() doesn't throw\n"
             f"        {app_class}.main(new String[]{{}});\n"
@@ -758,7 +781,7 @@ build/
         )
 
     def _generate_controller_tests(self, spring_files):
-        """Generate @WebMvcTest test classes for each discovered controller."""
+        """Generate comprehensive @WebMvcTest test classes for each controller."""
         test_files = {}
         for rel_path, content in spring_files.items():
             if "@RestController" not in content and "@Controller" not in content:
@@ -775,86 +798,104 @@ build/
             else:
                 full_package = self.group_id
 
-            # Find service dependencies: fields annotated or injected
+            # ── Detect dependencies to mock ──────────────────────────
             service_beans = []
+            has_jdbc = False
+            has_rest_template = False
+            has_webclient = False
             for line in content.splitlines():
-                # Match field injection or constructor params that end with Service
+                if "JdbcTemplate" in line:
+                    has_jdbc = True
+                if "RestTemplate" in line:
+                    has_rest_template = True
+                if "WebClient" in line:
+                    has_webclient = True
                 m = re.search(r'\b(\w+Service)\b', line)
                 if m and m.group(1) not in service_beans and m.group(1) != "Service":
                     service_beans.append(m.group(1))
 
-            # Find endpoint mappings to generate test methods
-            endpoints = []
-            for line in content.splitlines():
-                gm = re.search(r'@GetMapping\(["\']?(.*?)["\']?\)', line)
-                if gm:
-                    endpoints.append(("GET", gm.group(1).strip('"').strip("'")))
-                pm = re.search(r'@PostMapping\(["\']?(.*?)["\']?\)', line)
-                if pm:
-                    endpoints.append(("POST", pm.group(1).strip('"').strip("'")))
-                rm = re.search(r'@RequestMapping\(["\']?(.*?)["\']?\)', line)
-                if rm and "@RestController" in content:
-                    endpoints.append(("GET", rm.group(1).strip('"').strip("'")))
-
-            # Extract base path from class-level @RequestMapping
+            # ── Extract base path from class-level @RequestMapping ───
             base_path = ""
-            for line in content.splitlines():
-                bm = re.search(r'@RequestMapping\(["\']?(.*?)["\']?\)', line)
-                if bm:
-                    base_path = bm.group(1).strip('"').strip("'")
-                    break
+            lines_list = content.splitlines()
+            for i, line in enumerate(lines_list):
+                stripped = line.strip()
+                # Only match class-level @RequestMapping (right before class declaration)
+                if stripped.startswith("@RequestMapping"):
+                    # Check if next non-annotation line is the class declaration
+                    for j in range(i + 1, min(i + 5, len(lines_list))):
+                        if "class " in lines_list[j]:
+                            bm = re.search(
+                                r'@RequestMapping\(\s*(?:value\s*=\s*)?["\']?(.*?)["\']?\s*\)',
+                                stripped)
+                            if bm:
+                                base_path = bm.group(1).strip('"').strip("'")
+                            break
 
-            # Build mock bean declarations
+            # ── Parse all endpoint methods with full details ─────────
+            endpoints = self._parse_controller_endpoints(content, base_path)
+
+            # ── Build imports ────────────────────────────────────────
+            imports = set()
+            imports.add("org.junit.jupiter.api.DisplayName")
+            imports.add("org.junit.jupiter.api.Test")
+            imports.add("org.springframework.beans.factory.annotation.Autowired")
+            imports.add("org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest")
+            imports.add("org.springframework.boot.test.mock.bean.MockBean")
+            imports.add("org.springframework.http.MediaType")
+            imports.add("org.springframework.test.web.servlet.MockMvc")
+
+            static_imports = set()
+            static_imports.add("org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*")
+            static_imports.add("org.springframework.test.web.servlet.result.MockMvcResultMatchers.*")
+
+            needs_mockito = has_jdbc or service_beans or has_rest_template
+            if needs_mockito:
+                static_imports.add("org.mockito.Mockito.when")
+                static_imports.add("org.mockito.ArgumentMatchers.any")
+                static_imports.add("org.mockito.ArgumentMatchers.anyString")
+                static_imports.add("org.mockito.ArgumentMatchers.eq")
+
+            if has_jdbc:
+                imports.add("org.springframework.jdbc.core.JdbcTemplate")
+                imports.add("java.util.List")
+                imports.add("java.util.Map")
+                imports.add("java.util.Collections")
+
+            if has_rest_template:
+                imports.add("org.springframework.web.client.RestTemplate")
+
+            if has_webclient:
+                imports.add("org.springframework.web.reactive.function.client.WebClient")
+
+            # ── Build imports string ─────────────────────────────────
+            import_str = ""
+            for imp in sorted(imports):
+                import_str += f"import {imp};\n"
+            import_str += "\n"
+            for imp in sorted(static_imports):
+                import_str += f"import static {imp};\n"
+
+            # ── Build mock bean declarations ─────────────────────────
             mock_beans = ""
+            if has_jdbc:
+                mock_beans += "    @MockBean\n    private JdbcTemplate jdbcTemplate;\n\n"
+            if has_rest_template:
+                mock_beans += "    @MockBean\n    private RestTemplate restTemplate;\n\n"
+            if has_webclient:
+                mock_beans += "    @MockBean\n    private WebClient webClient;\n\n"
             for svc in service_beans:
-                mock_beans += f"    @MockBean\n    private {svc} {svc[0].lower()}{svc[1:]};\n\n"
+                bean_name = svc[0].lower() + svc[1:]
+                mock_beans += f"    @MockBean\n    private {svc} {bean_name};\n\n"
 
-            # Build test methods
-            test_methods = ""
-            # Always include a basic GET test
-            test_path = base_path if base_path else "/"
-            test_methods += (
-                f"    @Test\n"
-                f"    void shouldReturn200ForGetRequest() throws Exception {{\n"
-                f"        mockMvc.perform(get(\"{test_path}\"))\n"
-                f"                .andExpect(status().isOk());\n"
-                f"    }}\n\n"
-            )
-
-            # POST test if any POST endpoints found
-            has_post = any(m == "POST" for m, _ in endpoints)
-            if has_post:
-                post_path = next((p for m, p in endpoints if m == "POST"), base_path or "/")
-                test_methods += (
-                    f"    @Test\n"
-                    f"    void shouldReturn200ForPostRequest() throws Exception {{\n"
-                    f"        mockMvc.perform(post(\"{post_path}\")\n"
-                    f"                .contentType(MediaType.APPLICATION_JSON)\n"
-                    f"                .content(\"{{}}\"))\n"
-                    f"                .andExpect(status().isOk());\n"
-                    f"    }}\n\n"
-                )
-
-            # Error handling test
-            test_methods += (
-                f"    @Test\n"
-                f"    void shouldReturn404ForInvalidPath() throws Exception {{\n"
-                f"        mockMvc.perform(get(\"/nonexistent-path-for-test\"))\n"
-                f"                .andExpect(status().isNotFound());\n"
-                f"    }}\n"
-            )
+            # ── Build test methods ───────────────────────────────────
+            test_methods = self._build_controller_test_methods(
+                endpoints, has_jdbc, has_rest_template, service_beans, base_path)
 
             test_content = (
                 f"package {full_package};\n\n"
-                f"import org.junit.jupiter.api.Test;\n"
-                f"import org.springframework.beans.factory.annotation.Autowired;\n"
-                f"import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;\n"
-                f"import org.springframework.boot.test.mock.bean.MockBean;\n"
-                f"import org.springframework.http.MediaType;\n"
-                f"import org.springframework.test.web.servlet.MockMvc;\n\n"
-                f"import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;\n"
-                f"import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;\n\n"
+                f"{import_str}\n"
                 f"@WebMvcTest({class_name}.class)\n"
+                f"@DisplayName(\"{class_name} - Unit Tests\")\n"
                 f"class {test_class_name} {{\n\n"
                 f"    @Autowired\n"
                 f"    private MockMvc mockMvc;\n\n"
@@ -863,11 +904,607 @@ build/
                 f"}}\n"
             )
 
-            # Place test in same sub-path as the controller
             test_rel_path = rel_path.replace(".java", "Test.java")
             test_files[test_rel_path] = test_content
 
         return test_files
+
+    def _parse_controller_endpoints(self, content, base_path):
+        """Parse controller source to extract detailed endpoint information."""
+        endpoints = []
+        lines = content.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Match mapping annotations
+            mapping_match = re.search(
+                r'@(Get|Post|Put|Delete|Patch)Mapping'
+                r'(?:\(\s*(?:value\s*=\s*)?["\']?(.*?)["\']?\s*\))?',
+                line)
+
+            if not mapping_match:
+                i += 1
+                continue
+
+            http_method = mapping_match.group(1).upper()
+            path_suffix = mapping_match.group(2) or ""
+            path_suffix = path_suffix.strip('"').strip("'")
+            full_path = base_path.rstrip("/") + "/" + path_suffix.lstrip("/") \
+                if path_suffix else base_path
+            full_path = full_path if full_path else "/"
+            # Normalize double slashes
+            full_path = re.sub(r'//+', '/', full_path)
+
+            # Look ahead at the method signature to extract details
+            has_request_body = False
+            has_path_variable = False
+            has_request_param = False
+            path_var_names = []
+            request_param_names = []
+            method_name = ""
+
+            # Scan forward for the method declaration (up to 10 lines)
+            for j in range(i + 1, min(i + 10, len(lines))):
+                method_line = lines[j]
+                if "@RequestBody" in method_line:
+                    has_request_body = True
+                if "@PathVariable" in method_line:
+                    has_path_variable = True
+                    pv = re.findall(
+                        r'@PathVariable(?:\(["\']?(\w+)["\']?\))?\s+\w+\s+(\w+)',
+                        method_line)
+                    for grp in pv:
+                        path_var_names.append(grp[1] if grp[1] else grp[0])
+                if "@RequestParam" in method_line:
+                    has_request_param = True
+                    rp = re.findall(
+                        r'@RequestParam(?:\([^)]*\))?\s+\w+\s+(\w+)',
+                        method_line)
+                    request_param_names.extend(rp)
+                # Detect method name
+                mn = re.search(
+                    r'(?:public|private|protected)?\s*\w+(?:<[^>]+>)?\s+(\w+)\s*\(',
+                    method_line)
+                if mn:
+                    method_name = mn.group(1)
+                    break
+
+            # Detect path variables from the path pattern (e.g., {id})
+            path_vars_in_url = re.findall(r'\{(\w+)\}', full_path)
+            if path_vars_in_url:
+                has_path_variable = True
+                if not path_var_names:
+                    path_var_names = path_vars_in_url
+
+            # Detect DB operations in the method body
+            uses_db_select = False
+            uses_db_insert = False
+            uses_db_update = False
+            uses_db_delete = False
+            if method_name:
+                in_method = False
+                brace_depth = 0
+                for j in range(i, min(i + 80, len(lines))):
+                    ml = lines[j]
+                    if method_name in ml and "(" in ml:
+                        in_method = True
+                    if in_method:
+                        brace_depth += ml.count("{") - ml.count("}")
+                        if "queryForList" in ml or "queryForMap" in ml or "query(" in ml:
+                            uses_db_select = True
+                        if "update(" in ml and "jdbcTemplate" in ml:
+                            if http_method in ("POST", "PUT", "PATCH"):
+                                if http_method == "POST":
+                                    uses_db_insert = True
+                                else:
+                                    uses_db_update = True
+                            else:
+                                uses_db_delete = True
+                        if brace_depth <= 0 and in_method and j > i + 1:
+                            break
+
+            endpoints.append({
+                "method": http_method,
+                "path": full_path,
+                "method_name": method_name,
+                "has_request_body": has_request_body,
+                "has_path_variable": has_path_variable,
+                "has_request_param": has_request_param,
+                "path_var_names": path_var_names,
+                "request_param_names": request_param_names,
+                "uses_db_select": uses_db_select,
+                "uses_db_insert": uses_db_insert,
+                "uses_db_update": uses_db_update,
+                "uses_db_delete": uses_db_delete,
+            })
+            i += 1
+
+        return endpoints
+
+    def _build_controller_test_methods(self, endpoints, has_jdbc,
+                                       has_rest_template, service_beans,
+                                       base_path):
+        """Build comprehensive test methods for each controller endpoint."""
+        methods = ""
+        seen_names = set()
+
+        for ep in endpoints:
+            http_method = ep["method"]
+            path = ep["path"]
+            method_name = ep["method_name"] or http_method.lower()
+            display_method = http_method
+            # Create a clean test name
+            test_base = self._to_test_name(method_name)
+
+            # ── Build the test path (replace path variables with sample values) ──
+            test_path = re.sub(r'\{(\w+)\}', lambda m: self._sample_path_value(m.group(1)), path)
+
+            # ── Determine the MockMvc method name ────────────────────
+            mvc_method = http_method.lower()
+            if mvc_method == "delete":
+                mvc_method = "delete"
+
+            # ─────────────────────────────────────────────────────────
+            # HAPPY PATH TEST
+            # ─────────────────────────────────────────────────────────
+            happy_name = self._unique_name(f"test{test_base}_ReturnsOk", seen_names)
+            methods += f"    @Test\n"
+            methods += f"    @DisplayName(\"{display_method} {path} - should return 200 OK\")\n"
+            methods += f"    void {happy_name}() throws Exception {{\n"
+
+            # Add mock setup if DB is used
+            if has_jdbc and ep.get("uses_db_select"):
+                sql_table = self._guess_table_from_path(path)
+                methods += (
+                    f"        // Given\n"
+                    f"        when(jdbcTemplate.queryForList(anyString()))\n"
+                    f"                .thenReturn(List.of(Map.of(\"id\", 1, \"name\", \"test\")));\n\n"
+                )
+            elif has_jdbc and (ep.get("uses_db_insert") or ep.get("uses_db_update") or ep.get("uses_db_delete")):
+                methods += (
+                    f"        // Given\n"
+                    f"        when(jdbcTemplate.update(anyString(), any(Object[].class)))\n"
+                    f"                .thenReturn(1);\n\n"
+                )
+
+            # Build the MockMvc perform chain
+            methods += f"        // When & Then\n"
+            if http_method in ("POST", "PUT", "PATCH") and ep["has_request_body"]:
+                sample_body = self._sample_json_body(path)
+                methods += (
+                    f"        mockMvc.perform({mvc_method}(\"{test_path}\")\n"
+                    f"                .contentType(MediaType.APPLICATION_JSON)\n"
+                    f"                .content(\"{self._escape_java(sample_body)}\"))\n"
+                )
+            elif ep["has_request_param"]:
+                param_chain = ""
+                for pname in ep["request_param_names"]:
+                    param_chain += f"\n                .param(\"{pname}\", \"testValue\")"
+                methods += (
+                    f"        mockMvc.perform({mvc_method}(\"{test_path}\")"
+                    f"{param_chain})\n"
+                )
+            else:
+                methods += f"        mockMvc.perform({mvc_method}(\"{test_path}\"))\n"
+
+            # Response expectations
+            if http_method == "GET" and not ep["has_path_variable"]:
+                methods += (
+                    f"                .andExpect(status().isOk())\n"
+                    f"                .andExpect(content().contentType(MediaType.APPLICATION_JSON));\n"
+                )
+            else:
+                methods += f"                .andExpect(status().isOk());\n"
+            methods += f"    }}\n\n"
+
+            # ─────────────────────────────────────────────────────────
+            # GET list endpoint - verify JSON array response
+            # ─────────────────────────────────────────────────────────
+            if http_method == "GET" and not ep["has_path_variable"]:
+                array_name = self._unique_name(f"test{test_base}_ReturnsJsonArray", seen_names)
+                methods += f"    @Test\n"
+                methods += f"    @DisplayName(\"{display_method} {path} - should return JSON array\")\n"
+                methods += f"    void {array_name}() throws Exception {{\n"
+                if has_jdbc:
+                    methods += (
+                        f"        // Given\n"
+                        f"        when(jdbcTemplate.queryForList(anyString()))\n"
+                        f"                .thenReturn(List.of(\n"
+                        f"                        Map.of(\"id\", 1, \"name\", \"Alice\"),\n"
+                        f"                        Map.of(\"id\", 2, \"name\", \"Bob\")));\n\n"
+                    )
+                methods += (
+                    f"        // When & Then\n"
+                    f"        mockMvc.perform(get(\"{test_path}\"))\n"
+                    f"                .andExpect(status().isOk())\n"
+                    f"                .andExpect(jsonPath(\"$\").isArray());\n"
+                    f"    }}\n\n"
+                )
+
+            # ─────────────────────────────────────────────────────────
+            # GET list endpoint - verify empty list
+            # ─────────────────────────────────────────────────────────
+            if http_method == "GET" and not ep["has_path_variable"] and has_jdbc:
+                empty_name = self._unique_name(f"test{test_base}_ReturnsEmptyList", seen_names)
+                methods += f"    @Test\n"
+                methods += f"    @DisplayName(\"{display_method} {path} - should return empty list when no data\")\n"
+                methods += f"    void {empty_name}() throws Exception {{\n"
+                methods += (
+                    f"        // Given\n"
+                    f"        when(jdbcTemplate.queryForList(anyString()))\n"
+                    f"                .thenReturn(Collections.emptyList());\n\n"
+                    f"        // When & Then\n"
+                    f"        mockMvc.perform(get(\"{test_path}\"))\n"
+                    f"                .andExpect(status().isOk())\n"
+                    f"                .andExpect(jsonPath(\"$\").isEmpty());\n"
+                    f"    }}\n\n"
+                )
+
+            # ─────────────────────────────────────────────────────────
+            # POST/PUT/PATCH - empty body → 400
+            # ─────────────────────────────────────────────────────────
+            if http_method in ("POST", "PUT", "PATCH") and ep["has_request_body"]:
+                empty_name = self._unique_name(f"test{test_base}_EmptyBody_Returns400", seen_names)
+                methods += f"    @Test\n"
+                methods += f"    @DisplayName(\"{display_method} {path} - should return 400 with empty body\")\n"
+                methods += f"    void {empty_name}() throws Exception {{\n"
+                methods += (
+                    f"        mockMvc.perform({mvc_method}(\"{test_path}\")\n"
+                    f"                .contentType(MediaType.APPLICATION_JSON)\n"
+                    f"                .content(\"{{}}\"))\n"
+                    f"                .andExpect(status().isBadRequest());\n"
+                    f"    }}\n\n"
+                )
+
+            # ─────────────────────────────────────────────────────────
+            # POST/PUT/PATCH - invalid JSON → 400
+            # ─────────────────────────────────────────────────────────
+            if http_method in ("POST", "PUT", "PATCH") and ep["has_request_body"]:
+                invalid_name = self._unique_name(f"test{test_base}_InvalidJson_Returns400", seen_names)
+                methods += f"    @Test\n"
+                methods += f"    @DisplayName(\"{display_method} {path} - should return 400 with invalid JSON\")\n"
+                methods += f"    void {invalid_name}() throws Exception {{\n"
+                methods += (
+                    f"        mockMvc.perform({mvc_method}(\"{test_path}\")\n"
+                    f"                .contentType(MediaType.APPLICATION_JSON)\n"
+                    f"                .content(\"{{invalid json}}\"))\n"
+                    f"                .andExpect(status().isBadRequest());\n"
+                    f"    }}\n\n"
+                )
+
+            # ─────────────────────────────────────────────────────────
+            # POST/PUT/PATCH - missing content type → 415
+            # ─────────────────────────────────────────────────────────
+            if http_method in ("POST", "PUT", "PATCH") and ep["has_request_body"]:
+                no_ct_name = self._unique_name(f"test{test_base}_MissingContentType_Returns415", seen_names)
+                methods += f"    @Test\n"
+                methods += f"    @DisplayName(\"{display_method} {path} - should return 415 without content type\")\n"
+                methods += f"    void {no_ct_name}() throws Exception {{\n"
+                methods += (
+                    f"        mockMvc.perform({mvc_method}(\"{test_path}\")\n"
+                    f"                .content(\"{{\\\"name\\\":\\\"test\\\"}}\"))\n"
+                    f"                .andExpect(status().isUnsupportedMediaType());\n"
+                    f"    }}\n\n"
+                )
+
+            # ─────────────────────────────────────────────────────────
+            # GET by ID - not found → 404
+            # ─────────────────────────────────────────────────────────
+            if http_method == "GET" and ep["has_path_variable"]:
+                not_found_name = self._unique_name(f"test{test_base}_NotFound_Returns404", seen_names)
+                not_found_path = re.sub(r'\{(\w+)\}', "99999", path)
+                methods += f"    @Test\n"
+                methods += f"    @DisplayName(\"{display_method} {path} - should return 404 when not found\")\n"
+                methods += f"    void {not_found_name}() throws Exception {{\n"
+                if has_jdbc:
+                    methods += (
+                        f"        // Given - empty result for non-existent ID\n"
+                        f"        when(jdbcTemplate.queryForList(anyString(), any(Object[].class)))\n"
+                        f"                .thenReturn(Collections.emptyList());\n\n"
+                    )
+                methods += (
+                    f"        // When & Then\n"
+                    f"        mockMvc.perform(get(\"{not_found_path}\"))\n"
+                    f"                .andExpect(status().isNotFound());\n"
+                    f"    }}\n\n"
+                )
+
+            # ─────────────────────────────────────────────────────────
+            # DELETE by ID - happy path
+            # ─────────────────────────────────────────────────────────
+            if http_method == "DELETE" and ep["has_path_variable"]:
+                del_nf_name = self._unique_name(f"test{test_base}_NotFound_Returns404", seen_names)
+                not_found_path = re.sub(r'\{(\w+)\}', "99999", path)
+                methods += f"    @Test\n"
+                methods += f"    @DisplayName(\"{display_method} {path} - should return 404 for non-existent resource\")\n"
+                methods += f"    void {del_nf_name}() throws Exception {{\n"
+                if has_jdbc:
+                    methods += (
+                        f"        // Given - no rows affected\n"
+                        f"        when(jdbcTemplate.update(anyString(), any(Object[].class)))\n"
+                        f"                .thenReturn(0);\n\n"
+                    )
+                methods += (
+                    f"        mockMvc.perform(delete(\"{not_found_path}\"))\n"
+                    f"                .andExpect(status().isNotFound());\n"
+                    f"    }}\n\n"
+                )
+
+        # ── Always add a 404 test for unknown path ───────────────
+        unknown_name = self._unique_name("testUnknownPath_Returns404", seen_names)
+        methods += (
+            f"    @Test\n"
+            f"    @DisplayName(\"Unknown path - should return 404\")\n"
+            f"    void {unknown_name}() throws Exception {{\n"
+            f"        mockMvc.perform(get(\"/nonexistent-path-for-test\"))\n"
+            f"                .andExpect(status().isNotFound());\n"
+            f"    }}\n"
+        )
+
+        return methods
+
+    def _generate_integration_tests(self, spring_files):
+        """Generate @SpringBootTest integration test classes for each controller."""
+        test_files = {}
+        for rel_path, content in spring_files.items():
+            if "@RestController" not in content and "@Controller" not in content:
+                continue
+
+            class_name = rel_path.rsplit("/", 1)[-1].replace(".java", "")
+            test_class_name = f"{class_name}IntegrationTest"
+
+            if "/" in rel_path:
+                sub_package = rel_path.rsplit("/", 1)[0].replace("/", ".")
+                full_package = f"{self.group_id}.{sub_package}"
+            else:
+                full_package = self.group_id
+
+            # Extract base path
+            base_path = ""
+            for line in content.splitlines():
+                bm = re.search(
+                    r'@RequestMapping\(\s*(?:value\s*=\s*)?["\']?(.*?)["\']?\s*\)',
+                    line)
+                if bm:
+                    candidate = bm.group(1).strip('"').strip("'")
+                    # Check this is class-level (next non-annotation line is class)
+                    idx = content.splitlines().index(line)
+                    remaining = content.splitlines()[idx + 1:idx + 5]
+                    if any("class " in r for r in remaining):
+                        base_path = candidate
+                        break
+
+            # Parse endpoints
+            endpoints = self._parse_controller_endpoints(content, base_path)
+
+            # Separate by HTTP method for CRUD flow test
+            gets = [e for e in endpoints if e["method"] == "GET"]
+            posts = [e for e in endpoints if e["method"] == "POST"]
+            puts = [e for e in endpoints if e["method"] == "PUT"]
+            deletes = [e for e in endpoints if e["method"] == "DELETE"]
+
+            test_methods = ""
+
+            # ── Individual endpoint integration tests ────────────────
+            seen_names = set()
+            for ep in endpoints:
+                path = ep["path"]
+                test_path = re.sub(
+                    r'\{(\w+)\}',
+                    lambda m: self._sample_path_value(m.group(1)),
+                    path)
+                mvc_method = ep["method"].lower()
+                test_base = self._to_test_name(ep["method_name"] or ep["method"].lower())
+                tname = self._unique_name(
+                    f"testIntegration{test_base}_ReturnsSuccess", seen_names)
+
+                test_methods += f"    @Test\n"
+                test_methods += (
+                    f"    @DisplayName(\"Integration: {ep['method']} {path}"
+                    f" - should return success\")\n"
+                )
+                test_methods += f"    void {tname}() throws Exception {{\n"
+
+                if ep["method"] in ("POST", "PUT", "PATCH") and ep["has_request_body"]:
+                    sample_body = self._sample_json_body(path)
+                    test_methods += (
+                        f"        mockMvc.perform({mvc_method}(\"{test_path}\")\n"
+                        f"                .contentType(MediaType.APPLICATION_JSON)\n"
+                        f"                .content(\"{self._escape_java(sample_body)}\"))\n"
+                        f"                .andExpect(status().isOk());\n"
+                    )
+                elif ep["has_request_param"]:
+                    param_chain = ""
+                    for pname in ep["request_param_names"]:
+                        param_chain += f"\n                .param(\"{pname}\", \"testValue\")"
+                    test_methods += (
+                        f"        mockMvc.perform({mvc_method}(\"{test_path}\")"
+                        f"{param_chain})\n"
+                        f"                .andExpect(status().isOk());\n"
+                    )
+                else:
+                    test_methods += (
+                        f"        mockMvc.perform({mvc_method}(\"{test_path}\"))\n"
+                        f"                .andExpect(status().isOk());\n"
+                    )
+                test_methods += f"    }}\n\n"
+
+            # ── Full CRUD flow test (only if we have POST + GET) ─────
+            if posts and gets:
+                test_methods += (
+                    f"    @Test\n"
+                    f"    @DisplayName(\"Integration: Full CRUD flow\")\n"
+                    f"    void testFullCrudFlow() throws Exception {{\n"
+                )
+
+                # Create (POST)
+                post_ep = posts[0]
+                post_path = re.sub(
+                    r'\{(\w+)\}',
+                    lambda m: self._sample_path_value(m.group(1)),
+                    post_ep["path"])
+                sample_body = self._sample_json_body(post_ep["path"])
+                test_methods += (
+                    f"        // Create\n"
+                    f"        mockMvc.perform(post(\"{post_path}\")\n"
+                    f"                .contentType(MediaType.APPLICATION_JSON)\n"
+                    f"                .content(\"{self._escape_java(sample_body)}\"))\n"
+                    f"                .andExpect(status().isOk());\n\n"
+                )
+
+                # Read (GET)
+                get_ep = gets[0]
+                get_path = re.sub(
+                    r'\{(\w+)\}',
+                    lambda m: self._sample_path_value(m.group(1)),
+                    get_ep["path"])
+                test_methods += (
+                    f"        // Read\n"
+                    f"        mockMvc.perform(get(\"{get_path}\"))\n"
+                    f"                .andExpect(status().isOk());\n"
+                )
+
+                # Update (PUT) if available
+                if puts:
+                    put_ep = puts[0]
+                    put_path = re.sub(
+                        r'\{(\w+)\}',
+                        lambda m: self._sample_path_value(m.group(1)),
+                        put_ep["path"])
+                    update_body = self._sample_json_body(put_ep["path"])
+                    test_methods += (
+                        f"\n        // Update\n"
+                        f"        mockMvc.perform(put(\"{put_path}\")\n"
+                        f"                .contentType(MediaType.APPLICATION_JSON)\n"
+                        f"                .content(\"{self._escape_java(update_body)}\"))\n"
+                        f"                .andExpect(status().isOk());\n"
+                    )
+
+                # Delete (DELETE) if available
+                if deletes:
+                    del_ep = deletes[0]
+                    del_path = re.sub(
+                        r'\{(\w+)\}',
+                        lambda m: self._sample_path_value(m.group(1)),
+                        del_ep["path"])
+                    test_methods += (
+                        f"\n        // Delete\n"
+                        f"        mockMvc.perform(delete(\"{del_path}\"))\n"
+                        f"                .andExpect(status().isOk());\n"
+                    )
+
+                test_methods += f"    }}\n\n"
+
+            # ── Concurrent requests test ─────────────────────────────
+            if gets:
+                get_ep = gets[0]
+                get_path = re.sub(
+                    r'\{(\w+)\}',
+                    lambda m: self._sample_path_value(m.group(1)),
+                    get_ep["path"])
+                test_methods += (
+                    f"    @Test\n"
+                    f"    @DisplayName(\"Integration: Concurrent GET requests\")\n"
+                    f"    void testConcurrentGetRequests() throws Exception {{\n"
+                    f"        // Verify endpoint handles multiple rapid requests\n"
+                    f"        for (int i = 0; i < 5; i++) {{\n"
+                    f"            mockMvc.perform(get(\"{get_path}\"))\n"
+                    f"                    .andExpect(status().isOk());\n"
+                    f"        }}\n"
+                    f"    }}\n"
+                )
+
+            test_content = (
+                f"package {full_package};\n\n"
+                f"import org.junit.jupiter.api.DisplayName;\n"
+                f"import org.junit.jupiter.api.Test;\n"
+                f"import org.springframework.beans.factory.annotation.Autowired;\n"
+                f"import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;\n"
+                f"import org.springframework.boot.test.context.SpringBootTest;\n"
+                f"import org.springframework.http.MediaType;\n"
+                f"import org.springframework.test.web.servlet.MockMvc;\n\n"
+                f"import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;\n"
+                f"import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;\n\n"
+                f"@SpringBootTest\n"
+                f"@AutoConfigureMockMvc\n"
+                f"@DisplayName(\"{class_name} - Integration Tests\")\n"
+                f"class {test_class_name} {{\n\n"
+                f"    @Autowired\n"
+                f"    private MockMvc mockMvc;\n\n"
+                f"{test_methods}"
+                f"}}\n"
+            )
+
+            int_test_rel_path = rel_path.replace(".java", "IntegrationTest.java")
+            test_files[int_test_rel_path] = test_content
+
+        return test_files
+
+    # ── Test generation helper methods ───────────────────────────────
+    def _to_test_name(self, method_name):
+        """Convert a method name to a PascalCase test name fragment."""
+        if not method_name:
+            return "Endpoint"
+        return method_name[0].upper() + method_name[1:]
+
+    def _unique_name(self, name, seen):
+        """Ensure test method names are unique by appending a counter."""
+        original = name
+        counter = 2
+        while name in seen:
+            name = f"{original}{counter}"
+            counter += 1
+        seen.add(name)
+        return name
+
+    def _sample_path_value(self, var_name):
+        """Return a sample value for a path variable based on its name."""
+        lower = var_name.lower()
+        if lower == "id" or lower.endswith("id"):
+            return "1"
+        if lower == "name" or lower.endswith("name"):
+            return "test"
+        if lower == "status":
+            return "active"
+        return "test"
+
+    def _sample_json_body(self, path):
+        """Generate a plausible JSON body based on the endpoint path."""
+        # Extract the resource name from the path (last segment before any {id})
+        segments = [s for s in path.split("/") if s and not s.startswith("{")]
+        resource = segments[-1] if segments else "item"
+        # Singularize a rough approximation
+        if resource.endswith("s") and len(resource) > 3:
+            singular = resource[:-1]
+        else:
+            singular = resource
+
+        # Common field patterns based on resource name
+        common_fields = {
+            "user": '{"name":"John Doe","email":"john@example.com"}',
+            "order": '{"product":"Widget","quantity":1,"price":9.99}',
+            "product": '{"name":"Widget","price":9.99,"category":"General"}',
+            "customer": '{"name":"Jane Doe","email":"jane@example.com","phone":"555-0100"}',
+            "account": '{"name":"Test Account","type":"standard"}',
+            "item": '{"name":"Test Item","description":"A test item"}',
+            "employee": '{"name":"John Smith","department":"Engineering","email":"john@company.com"}',
+            "payment": '{"amount":100.00,"currency":"USD","method":"credit_card"}',
+            "message": '{"subject":"Test","body":"Hello World","recipient":"user@example.com"}',
+        }
+
+        return common_fields.get(
+            singular.lower(),
+            f'{{"name":"test {singular}","description":"Test {singular} description"}}')
+
+    def _guess_table_from_path(self, path):
+        """Guess a DB table name from the URL path."""
+        segments = [s for s in path.split("/") if s and not s.startswith("{")]
+        return segments[-1] if segments else "items"
+
+    def _escape_java(self, text):
+        """Escape a string for use inside a Java string literal."""
+        return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
     def _generate_dockerfile(self):
         return (

@@ -1,0 +1,834 @@
+{
+  "info": {
+    "name": "MuleSoft-to-SpringBoot Migrator — Complete API Collection",
+    "description": "Comprehensive Postman collection covering ALL API endpoints for the MuleSoft-to-Spring Boot Agentic AI Migration Platform.\n\nVersion: 2.0\nDate: April 2026\nBase URL: {{base_url}}/api/v2\n\nSetup:\n1. Set 'base_url' variable to your Azure Function App URL\n2. Set 'auth_token' after calling Login or use Azure AD token\n3. Set 'admin_email' and 'admin_password' for admin endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "mulesoft-migrator"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{auth_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://mulesoft-migrator-prod-func-hwddm9.azurewebsites.net",
+      "type": "string"
+    },
+    {
+      "key": "auth_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "migration_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "build_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "validation_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "admin_email",
+      "value": "admin@example.com",
+      "type": "string"
+    },
+    {
+      "key": "admin_password",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 — Health & Auth",
+      "description": "Health checks and authentication endpoints",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/health",
+              "host": ["{{base_url}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Liveness probe. Returns service health status including database, Redis, RAG, and LLM connectivity.\n\nExpected: 200 OK\nNo authentication required."
+          },
+          "response": []
+        },
+        {
+          "name": "Login (Email/Password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.token) {",
+                  "    pm.collectionVariables.set('auth_token', jsonData.token);",
+                  "    console.log('Token saved to auth_token variable');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"email\": \"{{admin_email}}\",\n    \"password\": \"{{admin_password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "auth", "login"]
+            },
+            "description": "Authenticate with email and password. Returns a HMAC-SHA256 signed JWT token.\n\nThe test script automatically saves the token to the 'auth_token' collection variable.\n\nExpected: 200 OK with { token, user: { email, name, role } }"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "auth", "me"]
+            },
+            "description": "Returns the currently authenticated user's profile.\n\nExpected: 200 OK with { email, display_name, role, azure_ad_oid }"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 — Migrations",
+      "description": "Core migration CRUD and workflow endpoints",
+      "item": [
+        {
+          "name": "Create Migration (Paste XML)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.collectionVariables.set('migration_id', jsonData.id);",
+                  "    console.log('Migration ID saved: ' + jsonData.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"project_name\": \"customer-service\",\n    \"source_type\": \"mule4\",\n    \"target_framework\": \"spring-boot\",\n    \"group_id\": \"com.example\",\n    \"artifact_id\": \"customer-service\",\n    \"base_package\": \"com.example.customerservice\",\n    \"java_version\": \"21\",\n    \"spring_boot_version\": \"3.2\",\n    \"build_tool\": \"maven\",\n    \"include_tests\": true,\n    \"include_swagger\": true,\n    \"include_docker\": true,\n    \"xml_files\": [\n        {\n            \"name\": \"customer-api.xml\",\n            \"content\": \"<?xml version='1.0' encoding='UTF-8'?>\\n<mule xmlns='http://www.mulesoft.org/schema/mule/core'\\n      xmlns:http='http://www.mulesoft.org/schema/mule/http'\\n      xmlns:db='http://www.mulesoft.org/schema/mule/db'\\n      xmlns:ee='http://www.mulesoft.org/schema/mule/ee/core'>\\n\\n    <http:listener-config name='HTTP_Listener_config'>\\n        <http:listener-connection host='0.0.0.0' port='8081'/>\\n    </http:listener-config>\\n\\n    <flow name='getCustomersFlow'>\\n        <http:listener config-ref='HTTP_Listener_config' path='/api/customers' method='GET'/>\\n        <logger level='INFO' message='Fetching all customers'/>\\n        <db:select config-ref='Database_Config'>\\n            <db:sql>SELECT * FROM customers</db:sql>\\n        </db:select>\\n        <ee:transform>\\n            <ee:message>\\n                <ee:set-payload><![CDATA[%dw 2.0\\noutput application/json\\n---\\npayload]]></ee:set-payload>\\n            </ee:message>\\n        </ee:transform>\\n    </flow>\\n</mule>\"\n        }\n    ],\n    \"llm_config\": {\n        \"enabled\": true,\n        \"provider\": \"github-copilot\",\n        \"model\": \"gpt-4o\"\n    }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations"]
+            },
+            "description": "Create a new migration job by pasting MuleSoft XML directly.\n\nThe migration is enqueued for async processing. Poll GET /migrations/{id} for status.\n\nExpected: 202 Accepted with migration object (status: 'queued')\n\nThe test script saves the migration_id for subsequent requests."
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Migration (ZIP File)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "MuleSoft project ZIP file"
+                },
+                {
+                  "key": "project_name",
+                  "value": "my-mule-project",
+                  "type": "text"
+                },
+                {
+                  "key": "java_version",
+                  "value": "21",
+                  "type": "text"
+                },
+                {
+                  "key": "group_id",
+                  "value": "com.example",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/upload",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "upload"]
+            },
+            "description": "Upload a MuleSoft project as a ZIP file.\n\nSupports:\n- Single XML files\n- ZIP archives with multiple XMLs\n- Full MuleSoft project folders\n\nAutomatically detects: XML files, pom.xml, DataWeave scripts (.dwl), RAML specs, config files.\n\nExpected: 202 Accepted"
+          },
+          "response": []
+        },
+        {
+          "name": "List Migrations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations?page=1&page_size=20&status=completed",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" },
+                { "key": "status", "value": "completed", "description": "Filter: queued|running|completed|failed|cancelled" }
+              ]
+            },
+            "description": "List all migrations for the current user with pagination.\n\nQuery Parameters:\n- page (default: 1)\n- page_size (default: 20, max: 100)\n- status (optional filter)\n\nExpected: 200 OK with { items: [...], total, page, page_size }"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Migration Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}"]
+            },
+            "description": "Get full details of a migration including status, output files, agent traces, and summary.\n\nPoll this endpoint every 3s while status is 'queued' or 'running'.\n\nExpected: 200 OK with full migration object"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Migration Files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}/files",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}", "files"]
+            },
+            "description": "List all generated files for a completed migration.\n\nReturns: { files: { 'path/to/file': 'content', ... } }\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Single File Content",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}/files/src/main/java/com/example/controller/CustomerController.java",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}", "files", "src", "main", "java", "com", "example", "controller", "CustomerController.java"]
+            },
+            "description": "Download a single generated file by its path.\n\nExpected: 200 OK with file content (text/plain)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Migration Files",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"files\": {\n        \"src/main/java/com/example/controller/CustomerController.java\": \"// Updated content here\"\n    }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}/files",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}", "files"]
+            },
+            "description": "Update specific files in a completed migration (e.g., after manual edits in the UI).\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Migration",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}", "cancel"]
+            },
+            "description": "Cancel a running or queued migration.\n\nExpected: 200 OK with updated migration (status: 'cancelled')"
+          },
+          "response": []
+        },
+        {
+          "name": "Retry Failed Migration",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}/retry",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}", "retry"]
+            },
+            "description": "Retry a failed or stuck migration. Resets status to 'queued' and re-enqueues.\n\nExpected: 200 OK with updated migration"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Migration",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}"]
+            },
+            "description": "Soft-delete a migration (sets deleted_at timestamp).\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Migration Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/stats/migrations",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "stats", "migrations"]
+            },
+            "description": "Get aggregate migration statistics.\n\nReturns: total, successful, failed, avg_duration_ms, total_tokens, success_rate, weekly_counts, monthly_counts\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Agent Traces",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}/agents",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}", "agents"]
+            },
+            "description": "Get AI agent execution traces for a migration.\n\nReturns: Array of agent traces with status, tokens, duration, RAG context used, errors.\n\nExpected: 200 OK"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 — Builds",
+      "description": "Maven build execution and monitoring",
+      "item": [
+        {
+          "name": "Create Build",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.collectionVariables.set('build_id', jsonData.id);",
+                  "    console.log('Build ID saved: ' + jsonData.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"migration_id\": \"{{migration_id}}\",\n    \"build_tool\": \"maven\",\n    \"java_version\": \"21\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/builds",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "builds"]
+            },
+            "description": "Trigger a Maven build for a completed migration.\n\nThe build runs via ACR Quick Build (Maven + Docker).\nPoll GET /builds/{id} for status and logs.\n\nExpected: 202 Accepted with build object (status: 'queued')"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Build Status & Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/builds/{{build_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "builds", "{{build_id}}"]
+            },
+            "description": "Get build status and logs.\n\nPoll every 3s while status is 'running'.\n\nReturns: { id, migration_id, status, exit_code, build_log, duration_ms, log_lines: [...] }\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "List Builds for Migration",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}/builds",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}", "builds"]
+            },
+            "description": "List all builds for a specific migration.\n\nExpected: 200 OK with { items: [...] }"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Build",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/builds/{{build_id}}/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "builds", "{{build_id}}", "cancel"]
+            },
+            "description": "Cancel a running build.\n\nExpected: 200 OK"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 — Validations",
+      "description": "Deploy, test, and validate generated Spring Boot apps",
+      "item": [
+        {
+          "name": "Create Validation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.collectionVariables.set('validation_id', jsonData.id);",
+                  "    console.log('Validation ID saved: ' + jsonData.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"migration_id\": \"{{migration_id}}\",\n    \"mode\": \"auto\",\n    \"java_version\": \"21\",\n    \"keep_alive_min\": 15,\n    \"mulesoft_base_url\": \"https://your-mulesoft-app.cloudhub.io\",\n    \"test_endpoints\": [\n        {\n            \"method\": \"GET\",\n            \"path\": \"/api/customers\",\n            \"headers\": {},\n            \"body\": null\n        },\n        {\n            \"method\": \"POST\",\n            \"path\": \"/api/customers\",\n            \"headers\": {\"Content-Type\": \"application/json\"},\n            \"body\": \"{\\\"name\\\": \\\"Test User\\\", \\\"email\\\": \\\"test@example.com\\\"}\"\n        }\n    ],\n    \"comparison_mode\": \"server\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/validations",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "validations"]
+            },
+            "description": "Create a validation job: builds Docker image, deploys to ACI, waits for health check.\n\nWorkflow:\n1. Build Docker image via ACR\n2. Deploy to Azure Container Instances\n3. Wait for /actuator/health (up to 180s)\n4. Status transitions: pending → building_image → deploying → running\n\nPoll GET /validations/{id} for status.\n\nExpected: 202 Accepted"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Validation Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/validations/{{validation_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "validations", "{{validation_id}}"]
+            },
+            "description": "Get validation status including ACI details.\n\nPoll every 3-5s while status is 'pending', 'building_image', or 'deploying'.\n\nReturns: { id, status, aci_name, aci_fqdn, app_url, test_results, user_verdict, expires_at }\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "List Validations for Migration",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}/validations",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}", "validations"]
+            },
+            "description": "List all validation jobs for a specific migration.\n\nExpected: 200 OK with { items: [...] }"
+          },
+          "response": []
+        },
+        {
+          "name": "Run API Comparison",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/validations/{{validation_id}}/compare",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "validations", "{{validation_id}}", "compare"]
+            },
+            "description": "Run side-by-side API comparison.\n\nCalls each test_endpoint on BOTH the MuleSoft app and the deployed Spring Boot app.\nCompares status codes and response bodies.\n\nReturns: { results: [ { method, path, match, mulesoft: {status, body}, springboot: {status, body} } ] }\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "Submit Verdict",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"verdict\": \"pass\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/validations/{{validation_id}}/verdict",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "validations", "{{validation_id}}", "verdict"]
+            },
+            "description": "Submit manual test verdict.\n\nOptions: 'pass', 'fail', 'partial'\n\nExpected: 200 OK with updated validation"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Container Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/validations/{{validation_id}}/logs",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "validations", "{{validation_id}}", "logs"]
+            },
+            "description": "Get container logs from the deployed ACI instance.\n\nReturns: { logs: 'container stdout/stderr output' }\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "Teardown Validation (Delete ACI)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/validations/{{validation_id}}/teardown",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "validations", "{{validation_id}}", "teardown"]
+            },
+            "description": "Manually teardown the ACI container (stop running app).\n\nNote: Containers auto-teardown after keep_alive_min expires.\n\nExpected: 200 OK"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 — RAG Knowledge Base",
+      "description": "Semantic search and knowledge base management",
+      "item": [
+        {
+          "name": "Semantic Search",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"query\": \"How to convert MuleSoft HTTP listener to Spring Boot REST controller\",\n    \"top_k\": 5,\n    \"min_score\": 0.3,\n    \"category\": null\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/rag/search",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "rag", "search"]
+            },
+            "description": "Search the RAG knowledge base using semantic similarity.\n\nUses text-embedding-3-large (3072 dims) + pgvector cosine similarity.\n\nReturns: { results: [ { title, content, category, score, metadata } ] }\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "Seed Knowledge Base (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/rag/seed",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "rag", "seed"]
+            },
+            "description": "Index the default migration pattern knowledge base.\n\nRequires admin privileges.\nSeeds 100+ migration patterns covering HTTP, DB, JMS, etc.\n\nExpected: 200 OK with { indexed_count: N }"
+          },
+          "response": []
+        },
+        {
+          "name": "List RAG Collections",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/rag/collections",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "rag", "collections"]
+            },
+            "description": "List all RAG collections with stats.\n\nReturns: { collections: [ { name, document_count, embedding_model } ] }\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "List Documents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/rag/documents?category=http-patterns",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "rag", "documents"],
+              "query": [
+                { "key": "category", "value": "http-patterns", "description": "Optional category filter" }
+              ]
+            },
+            "description": "List documents in the knowledge base.\n\nOptionally filter by category.\n\nExpected: 200 OK with { items: [...] }"
+          },
+          "response": []
+        },
+        {
+          "name": "Add Document (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"title\": \"Custom Salesforce to RestTemplate Pattern\",\n    \"content\": \"When converting MuleSoft Salesforce connector queries to Spring Boot, use RestTemplate with OAuth2 authentication. Configure the Salesforce REST API endpoint as a property and use RestTemplate to make HTTP calls with the Bearer token.\",\n    \"category\": \"salesforce-patterns\",\n    \"metadata\": {\n        \"source\": \"manual\",\n        \"author\": \"admin\"\n    }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/rag/documents",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "rag", "documents"]
+            },
+            "description": "Add a new document to the RAG knowledge base.\n\nThe document is embedded using text-embedding-3-large and stored in pgvector.\n\nExpected: 201 Created"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06 — GitHub Integration",
+      "description": "Push generated code to GitHub repositories",
+      "item": [
+        {
+          "name": "Push to GitHub",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"migration_id\": \"{{migration_id}}\",\n    \"repo_name\": \"your-org/customer-service-springboot\",\n    \"branch\": \"springboot-migration\",\n    \"commit_message\": \"Automated migration from MuleSoft to Spring Boot\",\n    \"github_pat\": \"ghp_your_github_personal_access_token\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/github/push",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "github", "push"]
+            },
+            "description": "Push all generated files to a GitHub repository.\n\nRequires a GitHub Personal Access Token (PAT) with 'repo' scope.\nPAT can be provided in request body or configured in Azure Key Vault.\n\nReturns: { commit_sha, commit_url, files_pushed }\n\nExpected: 200 OK"
+          },
+          "response": []
+        },
+        {
+          "name": "List GitHub Repos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/github/repos",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "github", "repos"]
+            },
+            "description": "List accessible GitHub repositories for the configured token.\n\nExpected: 200 OK with repo list"
+          },
+          "response": []
+        },
+        {
+          "name": "Get GitHub Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/github/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "github", "status"]
+            },
+            "description": "Check GitHub integration status (whether PAT is configured and valid).\n\nExpected: 200 OK with { connected, username, avatar_url }"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "07 — Troubleshooting Workflows",
+      "description": "Step-by-step troubleshooting sequences",
+      "item": [
+        {
+          "name": "T1: Migration Stuck in 'queued'",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}"]
+            },
+            "description": "TROUBLESHOOTING: Migration stuck in 'queued' status\n\nSteps:\n1. Check this endpoint — verify status is still 'queued'\n2. Check health endpoint — verify queue connectivity\n3. If queue is healthy, try POST /migrations/{id}/retry\n4. Check Application Insights for queue trigger errors\n5. Verify Azure Storage Queue is not paused"
+          },
+          "response": []
+        },
+        {
+          "name": "T2: Migration Failed — Get Error",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/migrations/{{migration_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "migrations", "{{migration_id}}"]
+            },
+            "description": "TROUBLESHOOTING: Migration failed\n\nSteps:\n1. Check this endpoint — look at 'error' field\n2. Common errors:\n   - 'XXE validation failed' → XML contains external entities\n   - 'No flows found in XML' → Invalid MuleSoft XML structure\n   - 'LLM provider error' → API key expired or provider down\n3. Check 'agent_trace' for detailed AI decision log\n4. Try POST /migrations/{id}/retry after fixing the issue"
+          },
+          "response": []
+        },
+        {
+          "name": "T3: Build Failed — Get Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/builds/{{build_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "builds", "{{build_id}}"]
+            },
+            "description": "TROUBLESHOOTING: Build failed\n\nSteps:\n1. Check build_log for Maven errors\n2. Common build failures:\n   - 'package does not exist' → Missing import in generated Java\n   - 'cannot find symbol' → Missing class reference\n   - 'Compilation failure' → Syntax error in generated code\n   - 'Cannot load driver class' → Database driver mismatch\n3. Fix: Edit migration files, then create a new build\n4. The validation pipeline auto-patches many common issues"
+          },
+          "response": []
+        },
+        {
+          "name": "T4: Validation Deployment Failed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/validations/{{validation_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "validations", "{{validation_id}}"]
+            },
+            "description": "TROUBLESHOOTING: Validation deployment failed\n\nSteps:\n1. Check validation status and error field\n2. Check container logs: GET /validations/{id}/logs\n3. Common failures:\n   - 'Health check timeout' → App didn't start in 180s\n   - 'Image build failed' → Same as build failures above\n   - 'ACI quota exceeded' → Too many containers running\n4. Check ACI logs for Spring Boot startup errors\n5. Teardown failed containers: POST /validations/{id}/teardown"
+          },
+          "response": []
+        },
+        {
+          "name": "T5: API Comparison Mismatch",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/validations/{{validation_id}}/compare",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "validations", "{{validation_id}}", "compare"]
+            },
+            "description": "TROUBLESHOOTING: API comparison shows mismatches\n\nSteps:\n1. Run comparison and examine results\n2. For each mismatch, check:\n   - Status code differences → Controller mapping or error handling issue\n   - Response body differences → DataWeave conversion issue\n   - Missing fields → Incomplete mapping in flow converter\n3. Edit the generated controller/service code\n4. Re-build and re-validate\n5. Or submit verdict as 'partial' and document differences"
+          },
+          "response": []
+        },
+        {
+          "name": "T6: Auth Token Expired (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"email\": \"{{admin_email}}\",\n    \"password\": \"{{admin_password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "auth", "login"]
+            },
+            "description": "TROUBLESHOOTING: Getting 401 Unauthorized\n\nSteps:\n1. Re-login to get a fresh token\n2. Token is automatically saved to auth_token variable\n3. If using Azure AD, get a new access token from MSAL\n4. Check if ADMIN_EMAIL matches in Azure Function App Settings"
+          },
+          "response": []
+        },
+        {
+          "name": "T7: RAG Search Returns No Results",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"query\": \"test query\",\n    \"top_k\": 10,\n    \"min_score\": 0.1\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v2/rag/search",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v2", "rag", "search"]
+            },
+            "description": "TROUBLESHOOTING: RAG search returns empty results\n\nSteps:\n1. Try this search with very low min_score (0.1)\n2. If still empty: Knowledge base may not be seeded\n3. Run POST /rag/seed to index the default patterns\n4. Check GET /rag/collections — should show document count > 0\n5. Verify PostgreSQL has pgvector extension enabled\n6. Check Azure OpenAI endpoint for embedding errors"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

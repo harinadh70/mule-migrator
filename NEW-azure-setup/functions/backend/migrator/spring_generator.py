@@ -49,12 +49,6 @@ class SpringBootGenerator:
             files[f"src/main/resources/application-{profile}.properties"] = \
                 self._generate_profile_properties(profile, parsed_data)
 
-        # ── H2 schema / sample data for local development ────────────
-        files["src/main/resources/schema-h2.sql"] = \
-            self._generate_h2_schema(parsed_data)
-        files["src/main/resources/data-h2.sql"] = \
-            self._generate_h2_sample_data(parsed_data)
-
         # ── logback-spring.xml ──────────────────────────────────────────
         files["src/main/resources/logback-spring.xml"] = \
             self._generate_logback_config()
@@ -213,11 +207,11 @@ class SpringBootGenerator:
             <scope>test</scope>
         </dependency>
 
-        <!-- H2 in-memory database (default profile / local development) -->
+        <!-- H2 in-memory database (for unit/integration tests only) -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>runtime</scope>
+            <scope>test</scope>
         </dependency>
 
         <!-- MySQL connector (enabled — detected from MuleSoft config) -->
@@ -388,13 +382,6 @@ class SpringBootGenerator:
                 if cfg.get("type") == "database":
                     has_db = True
                     self._db_configs.append(cfg)
-                    lines.append(f"# Original database config from MuleSoft ({cfg.get('name', '')})")
-                    for k, v in props.items():
-                        v_str = str(v)
-                        if "${" in v_str:
-                            v_str = v_str + "  # MuleSoft placeholder — set in profile config"
-                        lines.append(f"# {k}={v_str}")
-                    lines.append("")
                 elif cfg.get("type") != "http-listener":
                     lines.append(f"# {cfg.get('type', '')} — {cfg.get('name', '')}")
                     for k, v in props.items():
@@ -405,25 +392,75 @@ class SpringBootGenerator:
                             lines.append(f"# {k}={v_str}  # TODO: set actual value")
                     lines.append("")
 
-        # Default H2 datasource (works out of the box for local dev)
-        if has_db:
-            lines += [
-                "# Default: H2 in-memory database (profile-specific configs override this)",
-                "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=MySQL",
-                "spring.datasource.driver-class-name=org.h2.Driver",
-                "spring.datasource.username=sa",
-                "spring.datasource.password=",
-                "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
-                "spring.jpa.hibernate.ddl-auto=create-drop",
-                "spring.jpa.show-sql=true",
-                "spring.h2.console.enabled=true",
-                "spring.h2.console.path=/h2-console",
-                "",
-                "# H2 schema init — auto-create tables on startup",
-                "spring.sql.init.mode=always",
-                "spring.sql.init.platform=h2",
-                "",
-            ]
+        # Database config — use real DB from MuleSoft config as default
+        if has_db and self._db_configs:
+            cfg = self._db_configs[0]
+            db_url = str(cfg.get("url", ""))
+            db_driver = str(cfg.get("driver", ""))
+            db_user = str(cfg.get("user", ""))
+            db_password = str(cfg.get("password", ""))
+            db_host = str(cfg.get("host", ""))
+            db_port = str(cfg.get("port", "3306"))
+            db_name = str(cfg.get("database", ""))
+
+            # Build JDBC URL if needed
+            if not db_url and db_host and "${" not in db_host:
+                if "postgres" in db_driver.lower():
+                    db_url = f"jdbc:postgresql://{db_host}:{db_port}/{db_name}?sslmode=require"
+                    db_driver = db_driver or "org.postgresql.Driver"
+                elif "sqlserver" in db_driver.lower() or "mssql" in db_driver.lower():
+                    db_url = f"jdbc:sqlserver://{db_host}:{db_port};databaseName={db_name};encrypt=true"
+                    db_driver = db_driver or "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+                else:
+                    db_url = f"jdbc:mysql://{db_host}:{db_port}/{db_name}?useSSL=true&requireSSL=true&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+                    db_driver = db_driver or "com.mysql.cj.jdbc.Driver"
+
+            # Determine dialect
+            dialect = "org.hibernate.dialect.MySQLDialect"
+            if "postgres" in (db_driver + db_url).lower():
+                dialect = "org.hibernate.dialect.PostgreSQLDialect"
+            elif "sqlserver" in (db_driver + db_url).lower() or "mssql" in (db_driver + db_url).lower():
+                dialect = "org.hibernate.dialect.SQLServerDialect"
+
+            # If we have real resolvable values, use them as default
+            has_real_url = db_url and "${" not in db_url
+            has_real_user = db_user and "${" not in db_user
+            has_real_password = db_password and "${" not in db_password
+
+            if has_real_url:
+                lines += [
+                    f"# Database — same connection as original MuleSoft app ({cfg.get('name', '')})",
+                    f"spring.datasource.url={db_url}",
+                    f"spring.datasource.driver-class-name={db_driver}",
+                ]
+                if has_real_user:
+                    lines.append(f"spring.datasource.username={db_user}")
+                else:
+                    lines.append(f"spring.datasource.username=${{DB_USERNAME:admin}}")
+                if has_real_password:
+                    lines.append(f"spring.datasource.password={db_password}")
+                else:
+                    lines.append(f"spring.datasource.password=${{DB_PASSWORD}}")
+                lines += [
+                    f"spring.jpa.database-platform={dialect}",
+                    f"spring.jpa.hibernate.ddl-auto=none",
+                    f"spring.jpa.show-sql=true",
+                    "",
+                ]
+            else:
+                # MuleSoft config had placeholders — use env vars
+                lines += [
+                    f"# Database ({cfg.get('name', '')})",
+                    f"# Original MuleSoft config used placeholders — set via environment variables",
+                    f"spring.datasource.url=${{DB_URL:jdbc:mysql://localhost:3306/appdb}}",
+                    f"spring.datasource.driver-class-name={db_driver or 'com.mysql.cj.jdbc.Driver'}",
+                    f"spring.datasource.username=${{DB_USERNAME:admin}}",
+                    f"spring.datasource.password=${{DB_PASSWORD:changeme}}",
+                    f"spring.jpa.database-platform={dialect}",
+                    f"spring.jpa.hibernate.ddl-auto=none",
+                    f"spring.jpa.show-sql=true",
+                    "",
+                ]
 
         # Global properties (skip MuleSoft-only placeholders)
         for k, v in parsed_data.get("global_properties", {}).items():
@@ -594,13 +631,7 @@ class SpringBootGenerator:
                     "",
                 ]
 
-            # Disable H2 in profile configs
-            lines += [
-                "# Disable H2 (using real database in this profile)",
-                "spring.h2.console.enabled=false",
-                "spring.sql.init.mode=never",
-                "",
-            ]
+            # No H2 at runtime — real database is used (H2 is test-scope only)
 
         # Profile-specific logging
         if profile == "dev":

@@ -16,7 +16,11 @@ import re
 class SpringBootGenerator:
     def __init__(self, project_name="migrated-app", group_id="com.example",
                  java_version="17"):
-        self.project_name = project_name
+        # Sanitize project_name for Maven artifactId (no spaces, special chars)
+        import re as _re
+        self.project_name = _re.sub(r"[^a-zA-Z0-9._-]", "-", project_name).strip("-")
+        if not self.project_name:
+            self.project_name = "migrated-app"
         self.group_id = group_id
         self.java_version = java_version
         self.package_path = group_id.replace(".", "/")
@@ -41,10 +45,15 @@ class SpringBootGenerator:
             self._generate_properties(parsed_data, connector_info)
         files["src/main/resources/application.yml"] = \
             self._generate_yaml_properties(parsed_data, connector_info)
-        files["src/main/resources/application-dev.properties"] = \
-            self._generate_profile_properties("dev")
-        files["src/main/resources/application-prod.properties"] = \
-            self._generate_profile_properties("prod")
+        for profile in ("dev", "sit", "uat", "preprod", "prod"):
+            files[f"src/main/resources/application-{profile}.properties"] = \
+                self._generate_profile_properties(profile, parsed_data)
+
+        # ── H2 schema / sample data for local development ────────────
+        files["src/main/resources/schema-h2.sql"] = \
+            self._generate_h2_schema(parsed_data)
+        files["src/main/resources/data-h2.sql"] = \
+            self._generate_h2_sample_data(parsed_data)
 
         # ── logback-spring.xml ──────────────────────────────────────────
         files["src/main/resources/logback-spring.xml"] = \
@@ -204,22 +213,21 @@ class SpringBootGenerator:
             <scope>test</scope>
         </dependency>
 
-        <!-- H2 in-memory database for testing -->
+        <!-- H2 in-memory database (default profile / local development) -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
         </dependency>
 
-        <!-- MySQL connector (uncomment to enable)
+        <!-- MySQL connector (enabled — detected from MuleSoft config) -->
         <dependency>
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
         </dependency>
-        -->
 
-        <!-- PostgreSQL connector (uncomment to enable)
+        <!-- PostgreSQL connector (uncomment if needed)
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
@@ -255,6 +263,18 @@ class SpringBootGenerator:
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
@@ -293,7 +313,7 @@ class SpringBootGenerator:
             "io.swagger.v3.oas.annotations.servers.Server",
         ]
 
-        if any(f.get("source", {}).get("type") == "scheduler"
+        if any((f.get("source") or {}).get("type") == "scheduler"
                for f in parsed_data.get("flows", [])):
             annotations.append("@EnableScheduling")
             imports.append("org.springframework.scheduling.annotation.EnableScheduling")
@@ -334,44 +354,125 @@ class SpringBootGenerator:
     def _generate_properties(self, parsed_data, connector_info):
         from backend.migrator.connector_mapper import ConnectorMapper
         cm = ConnectorMapper()
-        lines = [f"# Migrated from MuleSoft — {self.project_name}",
-                 f"spring.application.name={self.project_name}", ""]
 
+        # Determine server port from MuleSoft config (resolve actual values)
+        server_port = "8081"
+        for cfg in parsed_data.get("global_configs", []):
+            if cfg.get("type") == "http-listener":
+                port_val = str(cfg.get("port", "8081"))
+                # Strip MuleSoft placeholders like ${http.port}
+                if "${" not in port_val and port_val.isdigit():
+                    server_port = port_val
+                break
+
+        lines = [
+            f"# ========================================",
+            f"# {self.project_name} - Spring Boot",
+            f"# Migrated from MuleSoft",
+            f"# ========================================",
+            f"# Use profiles: -Dspring.profiles.active=dev|sit|uat|preprod|prod",
+            f"",
+            f"spring.application.name={self.project_name}",
+            f"",
+            f"# Server port (from original MuleSoft config)",
+            f"server.port={server_port}",
+            f"",
+        ]
+
+        has_db = False
+        self._db_configs = []   # Store for profile generation
+        self._server_port = server_port  # Store for Dockerfile/docker-compose
         for cfg in parsed_data.get("global_configs", []):
             props = cm.get_spring_config_for_connector(cfg.get("type", ""), cfg)
             if props:
-                lines.append(f"# {cfg.get('type', '')} — {cfg.get('name', '')}")
-                for k, v in props.items():
-                    lines.append(f"{k}={v}")
-                lines.append("")
+                if cfg.get("type") == "database":
+                    has_db = True
+                    self._db_configs.append(cfg)
+                    lines.append(f"# Original database config from MuleSoft ({cfg.get('name', '')})")
+                    for k, v in props.items():
+                        v_str = str(v)
+                        if "${" in v_str:
+                            v_str = v_str + "  # MuleSoft placeholder — set in profile config"
+                        lines.append(f"# {k}={v_str}")
+                    lines.append("")
+                elif cfg.get("type") != "http-listener":
+                    lines.append(f"# {cfg.get('type', '')} — {cfg.get('name', '')}")
+                    for k, v in props.items():
+                        v_str = str(v)
+                        if "${" not in v_str:
+                            lines.append(f"{k}={v_str}")
+                        else:
+                            lines.append(f"# {k}={v_str}  # TODO: set actual value")
+                    lines.append("")
 
-        # Global properties
+        # Default H2 datasource (works out of the box for local dev)
+        if has_db:
+            lines += [
+                "# Default: H2 in-memory database (profile-specific configs override this)",
+                "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=MySQL",
+                "spring.datasource.driver-class-name=org.h2.Driver",
+                "spring.datasource.username=sa",
+                "spring.datasource.password=",
+                "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
+                "spring.jpa.hibernate.ddl-auto=create-drop",
+                "spring.jpa.show-sql=true",
+                "spring.h2.console.enabled=true",
+                "spring.h2.console.path=/h2-console",
+                "",
+                "# H2 schema init — auto-create tables on startup",
+                "spring.sql.init.mode=always",
+                "spring.sql.init.platform=h2",
+                "",
+            ]
+
+        # Global properties (skip MuleSoft-only placeholders)
         for k, v in parsed_data.get("global_properties", {}).items():
-            if not k.startswith("_"):
+            if not k.startswith("_") and "${" not in str(v):
                 lines.append(f"{k}={v}")
 
-        lines += ["", "# Logging", "logging.level.root=INFO",
-                   f"logging.level.{self.group_id}=DEBUG",
-                   "", "# Actuator",
-                   "management.endpoints.web.exposure.include=health,info,metrics"]
+        lines += [
+            "", "# Logging", "logging.level.root=INFO",
+            f"logging.level.{self.group_id}=DEBUG",
+            "", "# Actuator",
+            "management.endpoints.web.exposure.include=health,info,metrics",
+            "management.endpoint.health.show-details=always",
+            "", "# Swagger / OpenAPI",
+            "springdoc.swagger-ui.path=/swagger-ui.html",
+            "springdoc.api-docs.path=/v3/api-docs",
+        ]
         return "\n".join(lines) + "\n"
 
     def _generate_yaml_properties(self, parsed_data, connector_info):
-        lines = ["spring:", f"  application:", f"    name: {self.project_name}"]
+        """Generate application.yml with resolved values (no MuleSoft placeholders)."""
+        # Resolve server port
+        server_port = "8081"
         for cfg in parsed_data.get("global_configs", []):
             if cfg.get("type") == "http-listener":
-                lines += ["", "server:", f"  port: {cfg.get('port', '8081')}"]
-            elif cfg.get("type") == "database":
-                lines += ["", "  datasource:"]
-                if cfg.get("url"):
-                    lines.append(f"    url: {cfg['url']}")
-                if cfg.get("driver"):
-                    lines.append(f"    driver-class-name: {cfg['driver']}")
-                if cfg.get("user"):
-                    lines.append(f"    username: {cfg['user']}")
-                if cfg.get("password"):
-                    lines.append(f"    password: {cfg['password']}")
-                lines += ["  jpa:", "    hibernate:", "      ddl-auto: none"]
+                port_val = str(cfg.get("port", "8081"))
+                if "${" not in port_val and port_val.isdigit():
+                    server_port = port_val
+                break
+
+        lines = [
+            "# ========================================",
+            f"# {self.project_name} - Spring Boot",
+            "# Migrated from MuleSoft",
+            "# ========================================",
+            "# Profile-specific configs in application-{profile}.properties override these",
+            "",
+            "spring:",
+            "  application:",
+            f"    name: {self.project_name}",
+            "  profiles:",
+            "    active: ${SPRING_PROFILES_ACTIVE:}",
+            "",
+            "server:",
+            f"  port: {server_port}",
+        ]
+
+        # Note: DB config goes in profile-specific .properties files, not here
+        # This YAML only has shared/default settings
+
         lines += ["", "logging:", "  level:", "    root: INFO",
                    f"    {self.group_id}: DEBUG"]
 
@@ -390,22 +491,140 @@ class SpringBootGenerator:
                    "        include: health,info,metrics",
                    "  endpoint:",
                    "    health:",
-                   "      show-details: when-authorized"]
+                   "      show-details: always"]
 
         return "\n".join(lines) + "\n"
 
-    def _generate_profile_properties(self, profile):
-        lines = [f"# Profile: {profile}",
-                 f"spring.application.name={self.project_name}-{profile}", ""]
+    def _generate_profile_properties(self, profile, parsed_data=None):
+        """Generate profile-specific properties with actual DB config."""
+        lines = [
+            f"# ========================================",
+            f"# {profile.upper()} Environment — {self.project_name}",
+            f"# ========================================",
+            f"",
+            f"spring.application.name={self.project_name}-{profile}",
+            "",
+        ]
+
+        # Include actual database configuration from MuleSoft parsed data
+        db_configs = getattr(self, "_db_configs", [])
+        if db_configs:
+            cfg = db_configs[0]  # Primary database
+            db_url = cfg.get("url", "")
+            db_driver = cfg.get("driver", "")
+            db_user = cfg.get("user", "")
+            db_password = cfg.get("password", "")
+            db_host = cfg.get("host", "localhost")
+            db_port = cfg.get("port", "3306")
+            db_name = cfg.get("database", "appdb")
+
+            # Resolve MuleSoft placeholders to concrete values
+            def _resolve(val):
+                val = str(val) if val else ""
+                return "" if "${" in val else val
+
+            r_url = _resolve(db_url)
+            r_driver = _resolve(db_driver)
+            r_user = _resolve(db_user)
+            r_password = _resolve(db_password)
+            r_host = _resolve(db_host)
+            r_port = _resolve(db_port) or "3306"
+            r_name = _resolve(db_name) or "appdb"
+
+            # Build JDBC URL if not explicitly set
+            if not r_url and r_host:
+                # Detect driver type for URL format
+                if "postgres" in (r_driver or "").lower():
+                    r_url = f"jdbc:postgresql://{r_host}:{r_port}/{r_name}?sslmode=require"
+                elif "sqlserver" in (r_driver or "").lower() or "mssql" in (r_driver or "").lower():
+                    r_url = f"jdbc:sqlserver://{r_host}:{r_port};databaseName={r_name};encrypt=true"
+                else:
+                    r_url = f"jdbc:mysql://{r_host}:{r_port}/{r_name}?useSSL=true&requireSSL=true&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+
+            # Determine dialect
+            dialect = "org.hibernate.dialect.MySQLDialect"
+            if "postgres" in (r_driver or r_url).lower():
+                dialect = "org.hibernate.dialect.PostgreSQLDialect"
+                r_driver = r_driver or "org.postgresql.Driver"
+            elif "sqlserver" in (r_driver or r_url).lower() or "mssql" in (r_driver or r_url).lower():
+                dialect = "org.hibernate.dialect.SQLServerDialect"
+                r_driver = r_driver or "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+            else:
+                r_driver = r_driver or "com.mysql.cj.jdbc.Driver"
+
+            if profile == "dev" and r_url:
+                lines += [
+                    f"# Database ({cfg.get('name', 'primary')})",
+                    f"spring.datasource.url={r_url}",
+                    f"spring.datasource.driver-class-name={r_driver}",
+                    f"spring.datasource.username={r_user or 'admin'}",
+                    f"spring.datasource.password={r_password or 'changeme'}",
+                    f"spring.jpa.database-platform={dialect}",
+                    f"spring.jpa.hibernate.ddl-auto=none",
+                    f"spring.jpa.show-sql=true",
+                    "",
+                ]
+            elif profile == "prod":
+                # Prod uses env vars for secrets
+                prod_url = r_url.replace("-dev", "-prod").replace("_dev", "_prod") if r_url else ""
+                lines += [
+                    f"# Database ({cfg.get('name', 'primary')})",
+                    f"spring.datasource.url={prod_url or '${DB_URL}'}",
+                    f"spring.datasource.driver-class-name={r_driver}",
+                    f"spring.datasource.username=${{DB_USERNAME}}",
+                    f"spring.datasource.password=${{DB_PASSWORD}}",
+                    f"spring.jpa.database-platform={dialect}",
+                    f"spring.jpa.hibernate.ddl-auto=none",
+                    f"spring.jpa.show-sql=false",
+                    "",
+                ]
+            else:
+                # SIT / UAT / PreProd — use env vars for passwords
+                env_url = r_url
+                for env in ["dev", "sit", "uat", "preprod"]:
+                    env_url = env_url.replace(f"-{env}", f"-{profile}").replace(f"_{env}", f"_{profile}")
+                lines += [
+                    f"# Database ({cfg.get('name', 'primary')})",
+                    f"spring.datasource.url={env_url}",
+                    f"spring.datasource.driver-class-name={r_driver}",
+                    f"spring.datasource.username=${{DB_USERNAME:{r_user or 'admin'}}}",
+                    f"spring.datasource.password=${{DB_PASSWORD}}",
+                    f"spring.jpa.database-platform={dialect}",
+                    f"spring.jpa.hibernate.ddl-auto=none",
+                    "",
+                ]
+
+            # Disable H2 in profile configs
+            lines += [
+                "# Disable H2 (using real database in this profile)",
+                "spring.h2.console.enabled=false",
+                "spring.sql.init.mode=never",
+                "",
+            ]
+
+        # Profile-specific logging
         if profile == "dev":
-            lines += ["logging.level.root=DEBUG",
-                       f"logging.level.{self.group_id}=DEBUG",
-                       "spring.jpa.show-sql=true"]
+            lines += [
+                "# Logging",
+                "logging.level.root=INFO",
+                f"logging.level.{self.group_id}=DEBUG",
+                "spring.jpa.show-sql=true",
+            ]
         elif profile == "prod":
-            lines += ["logging.level.root=WARN",
-                       f"logging.level.{self.group_id}=INFO",
-                       "spring.jpa.show-sql=false",
-                       "server.error.include-stacktrace=never"]
+            lines += [
+                "# Logging",
+                "logging.level.root=WARN",
+                f"logging.level.{self.group_id}=INFO",
+                "spring.jpa.show-sql=false",
+                "server.error.include-stacktrace=never",
+            ]
+        else:
+            lines += [
+                "# Logging",
+                "logging.level.root=INFO",
+                f"logging.level.{self.group_id}=INFO",
+            ]
+
         return "\n".join(lines) + "\n"
 
     def _generate_logback_config(self):
@@ -460,6 +679,93 @@ class SpringBootGenerator:
 
 </configuration>
 """
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  H2 SCHEMA & SAMPLE DATA (for out-of-the-box local development)
+    # ══════════════════════════════════════════════════════════════════════
+    def _generate_h2_schema(self, parsed_data):
+        """Generate schema-h2.sql by inspecting DB queries in the converted code."""
+        # Extract table names from SQL queries in flows
+        tables = set()
+        for flow in parsed_data.get("flows", []):
+            for step in flow.get("steps", []):
+                sql = step.get("sql", "") or step.get("query", "")
+                if sql:
+                    # Extract table names from FROM/INTO/UPDATE/JOIN
+                    import re as _re
+                    for match in _re.findall(
+                        r'(?:FROM|INTO|UPDATE|JOIN)\s+(\w+)', sql, _re.IGNORECASE
+                    ):
+                        if match.lower() not in ("select", "where", "set", "values"):
+                            tables.add(match)
+
+        lines = [
+            "-- ========================================",
+            "-- H2 Schema (auto-generated from MuleSoft migration)",
+            "-- Creates tables for local development with H2",
+            "-- ========================================",
+            "",
+        ]
+
+        if tables:
+            for table in sorted(tables):
+                lines += [
+                    f"CREATE TABLE IF NOT EXISTS {table} (",
+                    f"    id INT AUTO_INCREMENT PRIMARY KEY,",
+                    f"    -- TODO: Add columns based on your MuleSoft queries",
+                    f"    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                    f");",
+                    "",
+                ]
+        else:
+            # Provide a useful default schema with common insurance patterns
+            lines += [
+                "-- Default schema (customize based on your domain)",
+                "CREATE TABLE IF NOT EXISTS policies (",
+                "    policy_id INT AUTO_INCREMENT PRIMARY KEY,",
+                "    policy_number VARCHAR(50) NOT NULL,",
+                "    holder_name VARCHAR(200) NOT NULL,",
+                "    holder_email VARCHAR(200),",
+                "    policy_type VARCHAR(50),",
+                "    coverage_amount DECIMAL(15, 2),",
+                "    premium DECIMAL(15, 2),",
+                "    status VARCHAR(20) DEFAULT 'ACTIVE',",
+                "    effective_date DATE,",
+                "    expiration_date DATE,",
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                ");",
+                "",
+                "CREATE TABLE IF NOT EXISTS claims (",
+                "    claim_id INT AUTO_INCREMENT PRIMARY KEY,",
+                "    claim_number VARCHAR(50) NOT NULL,",
+                "    policy_id INT,",
+                "    claimant_name VARCHAR(200),",
+                "    claim_type VARCHAR(50),",
+                "    description TEXT,",
+                "    claim_amount DECIMAL(15, 2),",
+                "    approved_amount DECIMAL(15, 2),",
+                "    status VARCHAR(20) DEFAULT 'SUBMITTED',",
+                "    filed_date DATE,",
+                "    resolved_date DATE,",
+                "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                ");",
+                "",
+            ]
+
+        return "\n".join(lines)
+
+    def _generate_h2_sample_data(self, parsed_data):
+        """Generate data-h2.sql with sample data for local development."""
+        return (
+            "-- ========================================\n"
+            "-- Sample data for H2 (local development)\n"
+            "-- ========================================\n"
+            "\n"
+            "-- Add INSERT statements here for test data\n"
+            "-- Example:\n"
+            "-- INSERT INTO policies (policy_number, holder_name, holder_email, policy_type, coverage_amount, premium, status, effective_date, expiration_date)\n"
+            "-- VALUES ('POL-2024-001', 'John Smith', 'john@email.com', 'AUTO', 50000.00, 1200.00, 'ACTIVE', '2024-01-01', '2025-01-01');\n"
+        )
 
     # ══════════════════════════════════════════════════════════════════════
     #  CONFIG CLASSES
@@ -1507,37 +1813,64 @@ build/
         return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
     def _generate_dockerfile(self):
+        port = getattr(self, "_server_port", "8081")
         return (
-            f"FROM eclipse-temurin:{self.java_version}-jdk-alpine AS build\n"
+            f"FROM maven:3.9-eclipse-temurin-{self.java_version} AS build\n"
             f"WORKDIR /app\n"
-            f"COPY . .\n"
-            f"RUN ./mvnw clean package -DskipTests\n\n"
+            f"COPY pom.xml .\n"
+            f"RUN mvn dependency:go-offline -B\n"
+            f"COPY src ./src\n"
+            f"RUN mvn clean package -Dmaven.test.skip=true -B\n\n"
             f"FROM eclipse-temurin:{self.java_version}-jre-alpine\n"
             f"WORKDIR /app\n"
             f"COPY --from=build /app/target/*.jar app.jar\n"
-            f"EXPOSE 8080\n"
+            f"EXPOSE {port}\n"
+            f"ENV SPRING_PROFILES_ACTIVE=dev\n"
             f'ENTRYPOINT ["java", "-jar", "app.jar"]\n'
         )
 
     def _generate_docker_compose(self, connectors):
+        port = getattr(self, "_server_port", "8081")
+        db_name = "appdb"
+        db_user = "admin"
+        db_password = "changeme"
+        db_configs = getattr(self, "_db_configs", [])
+        if db_configs:
+            cfg = db_configs[0]
+            dn = str(cfg.get("database", "appdb"))
+            du = str(cfg.get("user", "admin"))
+            dp = str(cfg.get("password", "changeme"))
+            if "${" not in dn:
+                db_name = dn
+            if "${" not in du:
+                db_user = du
+            if "${" not in dp:
+                db_password = dp
+
         services = [
             f"  app:\n"
             f"    build: .\n"
             f"    ports:\n"
-            f"      - '8080:8080'\n"
+            f"      - '{port}:{port}'\n"
             f"    environment:\n"
             f"      - SPRING_PROFILES_ACTIVE=dev\n"
+            f"    depends_on:\n"
+            f"      - db\n"
         ]
 
         if "database" in connectors:
             services.append(
-                "  db:\n"
-                "    image: mysql:8\n"
-                "    ports:\n"
-                "      - '3306:3306'\n"
-                "    environment:\n"
-                "      MYSQL_ROOT_PASSWORD: root\n"
-                "      MYSQL_DATABASE: appdb\n"
+                f"  db:\n"
+                f"    image: mysql:8\n"
+                f"    ports:\n"
+                f"      - '3306:3306'\n"
+                f"    environment:\n"
+                f"      MYSQL_ROOT_PASSWORD: root\n"
+                f"      MYSQL_DATABASE: {db_name}\n"
+                f"      MYSQL_USER: {db_user}\n"
+                f"      MYSQL_PASSWORD: {db_password}\n"
+                f"    volumes:\n"
+                f"      - mysql_data:/var/lib/mysql\n"
             )
 
         if "jms" in connectors:
@@ -1602,7 +1935,11 @@ build/
                 "      - discovery.type=single-node\n"
             )
 
-        return "version: '3.8'\nservices:\n" + "\n".join(services)
+        compose = "version: '3.8'\nservices:\n" + "\n".join(services)
+        # Add volumes section if database is used
+        if "database" in connectors:
+            compose += "\nvolumes:\n  mysql_data:\n"
+        return compose
 
     # ══════════════════════════════════════════════════════════════════════
     #  OPENAPI ANNOTATION INJECTION

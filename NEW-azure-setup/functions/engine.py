@@ -85,39 +85,81 @@ def run_static_migration(
     errors: list[str] = []
     unknown_elements: list[str] = []
     all_parsed: dict[str, Any] = {}
+    diag: list[str] = []  # diagnostic trace
+
+    diag.append(f"=== Migration Diagnostic ===")
+    diag.append(f"xml_files count: {len(xml_files)}")
+    diag.append(f"xml_files keys: {list(xml_files.keys())}")
+    diag.append(f"config: {config}")
 
     # ── Parse and convert each XML file ───────────────────────────
     for filename, xml_content in xml_files.items():
+        diag.append(f"\n--- Processing: {filename} ---")
+        diag.append(f"xml_content length: {len(xml_content)}")
+        diag.append(f"xml_content first 200 chars: {xml_content[:200]}")
         try:
             # XXE protection
             validate_xml_safe(xml_content)
+            diag.append("XXE validation passed")
 
             parsed = parser.parse(xml_content)
             if parsed is None:
                 errors.append(f"File {filename}: parser returned None")
+                diag.append("Parser returned None!")
                 continue
+
+            # Diagnostic: what did the parser find?
+            diag.append(f"Parser returned keys: {list(parsed.keys())}")
+            diag.append(f"  flows: {len(parsed.get('flows', []))}")
+            diag.append(f"  sub_flows: {len(parsed.get('sub_flows', []))}")
+            diag.append(f"  global_configs: {len(parsed.get('global_configs', []))}")
+            diag.append(f"  batch_jobs: {len(parsed.get('batch_jobs', []))}")
+            diag.append(f"  error_handlers: {len(parsed.get('error_handlers', []))}")
+            for i, flow in enumerate(parsed.get("flows", [])):
+                src = flow.get("source")
+                diag.append(f"  flow[{i}] name={flow.get('name')!r} "
+                            f"source={src.get('type') if isinstance(src, dict) else src!r} "
+                            f"processors={len(flow.get('processors', []))}")
 
             all_parsed = parsed
 
             converter = FlowConverter(dw_converter, mapper)
             conversion_result = converter.convert(parsed, {})
 
+            diag.append(f"FlowConverter returned type: {type(conversion_result).__name__}")
             if isinstance(conversion_result, dict):
+                diag.append(f"FlowConverter keys ({len(conversion_result)}): {list(conversion_result.keys())[:30]}")
                 files_dict = conversion_result.get("files", {})
+                diag.append(f"conversion_result.get('files'): {len(files_dict)} entries")
                 if not files_dict:
                     for k, v in conversion_result.items():
                         if isinstance(v, str) and ("." in k or "/" in k):
                             files_dict[k] = v
+                    diag.append(f"After fallback extraction: {len(files_dict)} entries")
+                    diag.append(f"Extracted keys: {list(files_dict.keys())[:30]}")
                 generated_files.update(files_dict)
                 unknown_elements.extend(
                     conversion_result.get("unknown_elements", [])
                 )
+            else:
+                diag.append(f"FlowConverter returned non-dict: {conversion_result!r}")
         except ValueError as exc:
+            diag.append(f"ValueError (XXE/parse): {exc}")
             # XXE or parse error — propagate as validation failure
             raise
         except Exception as exc:
-            logger.warning("engine.file_failed: %s — %s", filename, exc)
+            import traceback
+            diag.append(f"EXCEPTION: {exc}")
+            diag.append(traceback.format_exc())
+            logger.warning("engine.file_failed: %s — %s", filename, exc, exc_info=True)
             errors.append(f"File {filename}: {exc}")
+
+    diag.append(f"\n--- After flow conversion ---")
+    diag.append(f"generated_files count: {len(generated_files)}")
+    diag.append(f"generated_files keys: {list(generated_files.keys())[:30]}")
+    diag.append(f"all_parsed truthy: {bool(all_parsed)}")
+    if all_parsed:
+        diag.append(f"all_parsed keys: {list(all_parsed.keys())}")
 
     # ── Generate Spring Boot project skeleton ─────────────────────
     if all_parsed:
@@ -128,18 +170,61 @@ def run_static_migration(
                 java_version=java_version,
             )
             connector_info = mapper.map_connectors(all_parsed)
+            diag.append(f"connector_info: {connector_info}")
             project_files = generator.generate(
                 generated_files,
                 connector_info,
                 all_parsed,
             )
+            diag.append(f"SpringBootGenerator returned type: {type(project_files).__name__}")
             if isinstance(project_files, dict):
+                diag.append(f"SpringBootGenerator files ({len(project_files)}): {list(project_files.keys())[:30]}")
+                added = 0
                 for k, v in project_files.items():
                     if isinstance(v, str):
                         generated_files[k] = v
+                        added += 1
+                diag.append(f"Added {added} files from SpringBootGenerator")
+                # Remove root-level Java files now that they've been
+                # remapped under src/main/java/ by the generator
+                root_java = [k for k in generated_files
+                             if k.endswith(".java") and not k.startswith("src/")
+                             and f"src/main/java/{group_id.replace('.', '/')}/{k}" in generated_files]
+                for k in root_java:
+                    del generated_files[k]
+                if root_java:
+                    diag.append(f"Removed {len(root_java)} root-level Java duplicates")
+            else:
+                diag.append(f"SpringBootGenerator returned non-dict: {project_files!r}")
         except Exception as exc:
-            logger.warning("engine.generate_failed: %s", exc)
+            import traceback
+            diag.append(f"SpringBootGenerator EXCEPTION: {exc}")
+            diag.append(traceback.format_exc())
+            logger.warning("engine.generate_failed: %s", exc, exc_info=True)
             errors.append(f"Spring generation: {exc}")
+            # Fallback: if spring_generator crashed, at least remap
+            # flow_converter files to proper package structure
+            remapped = {}
+            for k, v in list(generated_files.items()):
+                if k.endswith(".java") and not k.startswith("src/"):
+                    remapped[f"src/main/java/com/example/{k}"] = v
+            generated_files.update(remapped)
+    else:
+        diag.append("SKIPPED SpringBootGenerator: all_parsed is falsy!")
+
+    # ── Include errors as a visible file so user sees what went wrong ─
+    if errors:
+        error_content = "# Migration Errors\n\n"
+        for i, err in enumerate(errors, 1):
+            error_content += f"{i}. {err}\n"
+        generated_files["MIGRATION-ERRORS.txt"] = error_content
+
+    # ── ALWAYS include diagnostic file ─────────────────────────────
+    diag.append(f"\n--- Final state ---")
+    diag.append(f"total generated_files: {len(generated_files)}")
+    diag.append(f"all keys: {sorted(generated_files.keys())}")
+    diag.append(f"errors: {errors}")
+    generated_files["MIGRATION-DIAGNOSTIC.txt"] = "\n".join(diag)
 
     logger.info(
         "engine.complete: files=%d errors=%d unknown=%d",
@@ -231,41 +316,48 @@ def _generate_application_yml_from_mule_config(
         "server": {},
     }
 
-    # Map HTTP port
+    # Map HTTP port — resolve actual value, skip MuleSoft placeholders
     http_props = mule_config.get("http", {})
     for key, val in http_props.items():
         if "port" in key.lower():
             try:
-                # Handle Mule property placeholders like ${http.port}
                 port_val = str(val).strip()
+                # Skip MuleSoft placeholders like ${http.port}
                 if port_val.isdigit():
                     spring_config["server"]["port"] = int(port_val)
                 else:
-                    spring_config["server"]["port"] = 8080  # default
+                    spring_config["server"]["port"] = 8081  # default for MuleSoft apps
             except (ValueError, TypeError):
-                spring_config["server"]["port"] = 8080
+                spring_config["server"]["port"] = 8081
             break
     if "port" not in spring_config["server"]:
-        spring_config["server"]["port"] = 8080
+        spring_config["server"]["port"] = 8081
 
-    # Map database config
+    # Map database config — resolve actual values, skip MuleSoft placeholders
     db_props = mule_config.get("db", {})
     if db_props:
         datasource: dict[str, Any] = {}
+
+        def _is_placeholder(v: str) -> bool:
+            """Check if value is a MuleSoft placeholder like ${...} or ${secure::...}"""
+            return "${" in str(v)
+
         for key, val in db_props.items():
             key_lower = key.lower()
             val_str = str(val) if val is not None else ""
+            if _is_placeholder(val_str):
+                continue  # Skip MuleSoft placeholders — they won't resolve in Spring
             if "url" in key_lower or "jdbc" in key_lower:
                 datasource["url"] = val_str
             elif "host" in key_lower and "url" not in datasource:
                 datasource["_host"] = val_str
-            elif "port" in key_lower and "database" in key_lower.replace("port", ""):
+            elif "port" in key_lower:
                 datasource["_db_port"] = val_str
             elif "user" in key_lower:
                 datasource["username"] = val_str
             elif "password" in key_lower:
                 datasource["password"] = val_str
-            elif "database" in key_lower or "schema" in key_lower:
+            elif "name" in key_lower or "database" in key_lower or "schema" in key_lower:
                 datasource["_database"] = val_str
 
         # Build JDBC URL if not explicitly provided
@@ -273,7 +365,9 @@ def _generate_application_yml_from_mule_config(
             host = datasource.pop("_host", "localhost")
             port = datasource.pop("_db_port", "3306")
             db_name = datasource.pop("_database", "mydb")
-            datasource["url"] = f"jdbc:mysql://{host}:{port}/{db_name}"
+            datasource["url"] = f"jdbc:mysql://{host}:{port}/{db_name}?useSSL=true&serverTimezone=UTC"
+            if not datasource.get("driver-class-name"):
+                datasource["driver-class-name"] = "com.mysql.cj.jdbc.Driver"
         else:
             datasource.pop("_host", None)
             datasource.pop("_db_port", None)
@@ -549,6 +643,79 @@ async def run_migration_pipeline(
             "scripts_included": len(dataweave_scripts),
         }
 
+    # ── Generate OpenAPI spec from RAML or parsed XML ───────────────
+    try:
+        from backend.migrator.swagger_generator import (
+            generate_from_raml,
+            generate_from_parsed_xml,
+        )
+
+        openapi_spec = None
+        openapi_source = None
+
+        # Also check dataweave_scripts for RAML files (they're often
+        # included as reference files but not in mule_raml for JSON endpoint)
+        effective_raml = dict(mule_raml) if mule_raml else {}
+        if not effective_raml and dataweave_scripts:
+            for dw_name, dw_content in dataweave_scripts.items():
+                if dw_name.lower().endswith(".raml"):
+                    # Strip the "// Original DataWeave..." header if present
+                    content = dw_content
+                    if content.startswith("//"):
+                        lines = content.split("\n")
+                        while lines and lines[0].startswith("//"):
+                            lines.pop(0)
+                        content = "\n".join(lines).lstrip()
+                    effective_raml[dw_name] = content
+
+        # Prefer RAML-based generation (more accurate API definition)
+        if effective_raml:
+            # Find the main RAML file (typically the one with the API title)
+            main_raml_content = None
+            main_raml_name = None
+            for rname, rcontent in effective_raml.items():
+                rname_lower = rname.lower()
+                # Pick the root .raml file (not a fragment/type/trait)
+                if rname_lower.endswith(".raml"):
+                    if main_raml_content is None or "title" in rcontent[:500]:
+                        main_raml_content = rcontent
+                        main_raml_name = rname
+            if main_raml_content:
+                try:
+                    openapi_spec = generate_from_raml(main_raml_content)
+                    openapi_source = f"raml:{main_raml_name}"
+                    logger.info("engine.openapi_from_raml: %s paths=%d",
+                                main_raml_name,
+                                len(openapi_spec.get("paths", {})))
+                except Exception as raml_exc:
+                    logger.warning("engine.openapi_from_raml_failed: %s", raml_exc)
+
+        # Fallback: generate from parsed XML flows
+        if openapi_spec is None and all_parsed:
+            openapi_spec = generate_from_parsed_xml(
+                all_parsed,
+                config.get("artifact_id", "migrated-app"),
+            )
+            openapi_source = "parsed_xml"
+            logger.info("engine.openapi_from_xml: paths=%d",
+                        len(openapi_spec.get("paths", {})))
+
+        if openapi_spec and openapi_spec.get("paths"):
+            import json as _json
+            generated_files["openapi.json"] = _json.dumps(openapi_spec, indent=2)
+            agent_trace["agents_executed"].append("openapi_generation")
+            agent_trace["agent_results"]["openapi_generation"] = {
+                "status": "success",
+                "source": openapi_source,
+                "endpoints": sum(
+                    len(methods) for methods in openapi_spec["paths"].values()
+                ),
+                "paths": len(openapi_spec["paths"]),
+            }
+    except Exception as exc:
+        logger.warning("engine.openapi_generation_failed: %s", exc)
+        errors.append(f"OpenAPI generation: {exc}")
+
     # ── Map MuleSoft connectors to Spring Boot dependencies ───────
     spring_deps_suggestions: list[str] = []
     if pom_metadata.get("connectors"):
@@ -581,7 +748,17 @@ async def run_migration_pipeline(
 
     # ── RAG context retrieval ─────────────────────────────────────
     rag_context = ""
+    # Check both llm_config from frontend/DB AND ENABLE_LLM env var as fallback
     llm_enabled = llm_config.get("enabled", False)
+    if not llm_enabled:
+        env_llm = os.getenv("ENABLE_LLM", "").lower()
+        if env_llm in ("true", "1", "yes"):
+            llm_enabled = True
+            logger.info("engine.llm_enabled_via_env: ENABLE_LLM=%s (llm_config.enabled was %s)",
+                        env_llm, llm_config.get("enabled"))
+    logger.info("engine.llm_config_check: enabled=%s provider=%s model=%s config_keys=%s",
+                llm_enabled, llm_config.get("provider"), llm_config.get("model"),
+                list(llm_config.keys()) if isinstance(llm_config, dict) else type(llm_config).__name__)
     if llm_enabled and generated_files:
         try:
             from rag_service import get_migration_context
@@ -602,21 +779,55 @@ async def run_migration_pipeline(
             logger.warning("engine.rag_retrieval_failed: %s", exc)
             # Non-fatal — continue without RAG context
 
-    # ── Optional LLM enhancement via Azure OpenAI ──────────────────
+    # ── Optional LLM enhancement via GitHub Copilot or Azure OpenAI ─
     if llm_enabled and generated_files:
         try:
-            from openai import AzureOpenAI
+            from openai import OpenAI
 
-            endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-            api_key = os.getenv("AZURE_OPENAI_API_KEY", "")
-            deployment = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT", "gpt-4.1")
+            github_token = os.getenv("GITHUB_TOKEN", "")
+            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+            azure_key = os.getenv("AZURE_OPENAI_API_KEY", "")
 
-            if endpoint and api_key:
+            logger.info("engine.llm_credentials: github_token=%s azure_endpoint=%s azure_key=%s",
+                        "SET" if github_token else "EMPTY",
+                        "SET" if azure_endpoint else "EMPTY",
+                        "SET" if azure_key else "EMPTY")
+
+            client = None
+            deployment = "gpt-4.1"
+            provider_name = "none"
+
+            # Allow frontend to specify model via llm_config
+            requested_model = llm_config.get("model", "")
+            requested_provider = llm_config.get("provider", "")
+
+            # Primary: Azure OpenAI (higher rate limits, no daily cap)
+            # Fallback: GitHub Copilot Models API (50 req/day limit)
+            if azure_endpoint and azure_key and requested_provider != "github_copilot":
+                from openai import AzureOpenAI
                 client = AzureOpenAI(
-                    azure_endpoint=endpoint,
-                    api_key=api_key,
+                    azure_endpoint=azure_endpoint,
+                    api_key=azure_key,
                     api_version="2024-12-01-preview",
                 )
+                # IMPORTANT: Azure OpenAI uses custom deployment names (e.g. "gpt-41")
+                # which differ from the model name ("gpt-4.1"). Always use the env var.
+                deployment = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT", "gpt-41")
+                provider_name = "azure_openai"
+                logger.info("engine.llm_provider: azure_openai deployment=%s (requested_model=%s)",
+                            deployment, requested_model)
+            elif github_token:
+                # Fallback: GitHub Copilot (Models API) — 50 req/day limit
+                # GitHub uses standard model names like "gpt-4.1"
+                client = OpenAI(
+                    base_url="https://models.inference.ai.azure.com",
+                    api_key=github_token,
+                )
+                deployment = requested_model or os.getenv("GITHUB_COPILOT_MODEL", "gpt-4.1")
+                provider_name = "github_copilot"
+                logger.info("engine.llm_provider: github_copilot model=%s (fallback)", deployment)
+
+            if client:
 
                 # Build the system prompt with RAG context and extra MuleSoft context
                 rag_section = ""
@@ -688,17 +899,82 @@ async def run_migration_pipeline(
                 agent_trace["agents_executed"].append("llm_enhancement")
                 agent_trace["agent_results"]["llm_enhancement"] = {"files": {}}
 
+                # Max ~6000 tokens ≈ ~24000 chars of Java code (leaves room for system prompt)
+                _MAX_FILE_CHARS = 20000
+                _MAX_RETRIES = 2
+                _files_enhanced = 0
+                _files_skipped = 0
+                _rate_limited = False
+
                 for filepath, content in java_files.items():
+                    # Skip if we've been rate-limited (don't burn remaining quota)
+                    if _rate_limited:
+                        agent_trace["agent_results"]["llm_enhancement"]["files"][filepath] = {
+                            "status": "skipped", "reason": "rate_limited",
+                        }
+                        _files_skipped += 1
+                        continue
+
+                    # Truncate very large files to avoid 413 errors
+                    file_content = content
+                    truncated = False
+                    if len(file_content) > _MAX_FILE_CHARS:
+                        file_content = file_content[:_MAX_FILE_CHARS]
+                        truncated = True
+                        logger.info("engine.llm_file_truncated: %s (%d -> %d chars)",
+                                    filepath, len(content), _MAX_FILE_CHARS)
+
                     try:
-                        response = client.chat.completions.create(
-                            model=deployment,
-                            messages=[
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": f"File: {filepath}\n\n```java\n{content}\n```"},
-                            ],
-                            temperature=0.1,
-                            max_tokens=4000,
-                        )
+                        response = None
+                        last_exc = None
+                        for attempt in range(_MAX_RETRIES + 1):
+                            try:
+                                response = client.chat.completions.create(
+                                    model=deployment,
+                                    messages=[
+                                        {"role": "system", "content": system_prompt},
+                                        {"role": "user", "content": f"File: {filepath}\n\n```java\n{file_content}\n```"},
+                                    ],
+                                    temperature=0.1,
+                                    max_tokens=4096,
+                                )
+                                break  # Success
+                            except Exception as retry_exc:
+                                last_exc = retry_exc
+                                err_str = str(retry_exc)
+                                # Rate limit — stop trying all files
+                                if "429" in err_str or "RateLimitReached" in err_str:
+                                    if "86400" in err_str or "UserByModelByDay" in err_str:
+                                        # Daily limit hit — no point retrying
+                                        _rate_limited = True
+                                        logger.warning("engine.llm_daily_rate_limit: %s", err_str[:200])
+                                        break
+                                    # Per-minute limit — wait and retry
+                                    if attempt < _MAX_RETRIES:
+                                        import time as _time
+                                        wait = min(30, 10 * (attempt + 1))
+                                        logger.info("engine.llm_rate_limit_retry: attempt %d, wait %ds", attempt + 1, wait)
+                                        _time.sleep(wait)
+                                        continue
+                                # Token limit — try with smaller content
+                                if "413" in err_str or "tokens_limit" in err_str:
+                                    if not truncated and len(file_content) > 8000:
+                                        file_content = file_content[:8000]
+                                        truncated = True
+                                        logger.info("engine.llm_file_shrink: %s -> 8000 chars", filepath)
+                                        continue
+                                break  # Other error — don't retry
+
+                        if _rate_limited:
+                            agent_trace["agent_results"]["llm_enhancement"]["files"][filepath] = {
+                                "status": "skipped", "reason": "daily_rate_limit",
+                            }
+                            _files_skipped += 1
+                            continue
+
+                        if response is None:
+                            raise last_exc or RuntimeError("No response from LLM")
+
                         improved = response.choices[0].message.content or content
                         # Strip markdown code fences if present
                         if improved.startswith("```"):
@@ -708,26 +984,33 @@ async def run_migration_pipeline(
                         improved = improved.strip()
                         if improved:
                             generated_files[filepath] = improved
+                            _files_enhanced += 1
 
                         total_tokens += (response.usage.total_tokens if response.usage else 0)
-                        total_cost_usd += (response.usage.total_tokens or 0) * 0.00001  # ~$0.01/1K tokens
+                        total_cost_usd += (response.usage.total_tokens or 0) * 0.00001
 
                         agent_trace["agent_results"]["llm_enhancement"]["files"][filepath] = {
                             "status": "success",
                             "tokens": response.usage.total_tokens if response.usage else 0,
+                            "truncated": truncated,
                         }
                     except Exception as file_exc:
                         logger.warning("engine.llm_file_enhance_failed: %s %s", filepath, file_exc)
                         agent_trace["agent_results"]["llm_enhancement"]["files"][filepath] = {
-                            "status": "error", "error": str(file_exc),
+                            "status": "error", "error": str(file_exc)[:200],
                         }
 
-                logger.info("engine.llm_enhanced: files=%d tokens=%d", len(java_files), total_tokens)
+                logger.info("engine.llm_enhanced: provider=%s total=%d enhanced=%d skipped=%d tokens=%d",
+                            provider_name, len(java_files), _files_enhanced, _files_skipped, total_tokens)
             else:
-                errors.append("LLM enhancement: Azure OpenAI not configured")
+                logger.error("engine.llm_no_provider: GITHUB_TOKEN=%s AZURE_OPENAI_ENDPOINT=%s AZURE_OPENAI_API_KEY=%s",
+                             "SET" if github_token else "EMPTY",
+                             "SET" if azure_endpoint else "EMPTY",
+                             "SET" if azure_key else "EMPTY")
+                errors.append("LLM enhancement: No AI provider configured. Set GITHUB_TOKEN or AZURE_OPENAI_ENDPOINT+AZURE_OPENAI_API_KEY in Function App settings.")
         except Exception as exc:
-            logger.warning("engine.llm_pipeline_failed: %s", exc)
-            errors.append(f"LLM enhancement: {exc}")
+            logger.error("engine.llm_pipeline_failed: %s", exc, exc_info=True)
+            errors.append(f"LLM enhancement failed: {exc}")
 
     duration_ms = int((time.monotonic() - start) * 1000)
 

@@ -807,6 +807,11 @@ class MuleSoftParser:
             "apikit": ["apikit"],
             "oauth": ["oauth"],
             "anypoint-mq": ["anypoint-mq"],
+            "azure-blob": ["azure-blob", "azure-storage-blob"],
+            "azure-file": ["azure-file", "azure-storage-file"],
+            "azure-service-bus": ["azure-service-bus"],
+            "azure-cosmos": ["azure-cosmos"],
+            "azure-keyvault": ["azure-key-vault", "azure-keyvault"],
         }
         for elem in root.iter():
             if not self._is_element(elem):

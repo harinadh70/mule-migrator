@@ -19,6 +19,9 @@ const SUPPORTED_EXTENSIONS = [
   ".dwl", ".wsdl", ".xsd", ".mflow", ".mxml",
 ];
 
+// Directories to skip when reading a project folder
+const SKIP_DIRS = ["target", "node_modules", ".git", ".mule", "lib", ".idea", ".settings"];
+
 function isSupported(name: string): boolean {
   const lower = name.toLowerCase();
   return SUPPORTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
@@ -69,7 +72,7 @@ async function traverseDirectory(
     const subPath = basePath ? `${basePath}/${entry.name}` : entry.name;
     for (const child of children) {
       // Skip common non-source directories
-      if (child.name === "target" || child.name === "node_modules" || child.name === ".git" || child.name === ".mule") {
+      if (SKIP_DIRS.includes(child.name)) {
         continue;
       }
       const childResults = await traverseDirectory(child, subPath);
@@ -167,11 +170,13 @@ export default function FileDropZone({ onFilesLoaded, files }: FileDropZoneProps
       try {
         const entries: { file: File; path: string }[] = [];
         for (const file of Array.from(e.target.files)) {
-          if (isSupported(file.name)) {
-            // webkitRelativePath gives folder structure
-            const path = (file as any).webkitRelativePath || file.name;
-            entries.push({ file, path });
-          }
+          if (!isSupported(file.name)) continue;
+          // webkitRelativePath gives folder structure
+          const filePath = (file as any).webkitRelativePath || file.name;
+          // Skip files inside build/IDE directories (same filter as drag-and-drop)
+          const pathParts = filePath.split("/");
+          if (pathParts.some((part: string) => SKIP_DIRS.includes(part))) continue;
+          entries.push({ file, path: filePath });
         }
         await processFiles(entries);
       } finally {

@@ -26,6 +26,7 @@ export interface MigrationCreate {
   sourceType: MuleSourceType;
   targetFramework: TargetFramework;
   config: MigrationConfig;
+  uploadedFiles?: Array<{ name: string; content: string; size: number; path: string }>;
 }
 
 export interface MigrationConfig {
@@ -40,6 +41,7 @@ export interface MigrationConfig {
   includeDocs: boolean;
   llmProvider: string;
   llmModel: string;
+  llmEnabled?: boolean;
 }
 
 export type MuleSourceType = "mule3" | "mule4";

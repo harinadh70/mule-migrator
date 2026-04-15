@@ -13,6 +13,7 @@ HTTP Triggers:
   GET    /api/v2/migrations/{id}/files/{path}   Get single file
   DELETE /api/v2/migrations/{id}      Soft delete
   POST   /api/v2/migrations/{id}/cancel         Cancel
+  POST   /api/v2/migrations/{id}/retry          Retry failed/stuck migration
   GET    /api/v2/migrations/stats     Aggregate stats
   POST   /api/v2/builds              Trigger build (enqueue)
   GET    /api/v2/builds/{id}         Build status
@@ -121,13 +122,94 @@ def _enqueue_message(queue_name: str, message: dict) -> None:
     client.send_message(encoded)
 
 
+def _enqueue_message_delayed(queue_name: str, message: dict, visibility_timeout: int = 0) -> None:
+    """Send a message with visibility timeout (delayed delivery)."""
+    from azure.storage.queue import QueueClient
+    import base64
+
+    conn_str = os.getenv("AzureWebJobsStorage", "UseDevelopmentStorage=true")
+    client = QueueClient.from_connection_string(conn_str, queue_name)
+    try:
+        client.create_queue()
+    except Exception:
+        pass
+    encoded = base64.b64encode(json.dumps(message).encode()).decode()
+    client.send_message(encoded, visibility_timeout=visibility_timeout)
+
+
 def _get_user_from_header(req: func.HttpRequest) -> dict:
     """
-    Extract user info from the x-ms-client-principal header.
+    Extract user info from:
+      1. Authorization: Bearer <custom-token> (email/password login)
+      2. x-ms-client-principal header (Azure EasyAuth / MSAL)
+      3. Development fallback
     Returns a dict with 'email', 'name', 'roles', 'oid'.
     """
     import base64 as b64mod
+    import hashlib, hmac
 
+    # --- Check Bearer token first ---
+    auth_header = req.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer ") and auth_header != "Bearer msal":
+        token = auth_header[7:]
+        jwt_parts = token.split(".")
+
+        # Azure AD JWT (3-part: header.payload.signature)
+        if len(jwt_parts) == 3:
+            try:
+                # Decode payload (middle part) without signature verification
+                # (EasyAuth or app-level validation handles trust;
+                #  we just extract claims for user identification)
+                payload_b64 = jwt_parts[1]
+                padded = payload_b64 + "=" * (4 - len(payload_b64) % 4)
+                payload = json.loads(b64mod.urlsafe_b64decode(padded))
+
+                import time
+                # Verify token isn't expired
+                if payload.get("exp", 0) > time.time():
+                    # Verify audience matches our app
+                    aud = payload.get("aud", "")
+                    expected_client_id = os.environ.get("AZURE_AD_CLIENT_ID", "562164fe-698a-4b4a-b874-40025140f008")
+                    if aud == expected_client_id or aud == f"api://{expected_client_id}":
+                        email = payload.get("preferred_username") or payload.get("email") or payload.get("upn", "")
+                        name = payload.get("name", "")
+                        oid = payload.get("oid", "")
+                        roles = payload.get("roles", ["user"])
+                        if isinstance(roles, list) and len(roles) == 0:
+                            roles = ["user"]
+                        return {
+                            "email": email,
+                            "name": name,
+                            "roles": roles,
+                            "oid": oid or email,
+                        }
+                    else:
+                        logger.warning("azure_ad_jwt.audience_mismatch: got=%s expected=%s", aud, expected_client_id)
+            except Exception as exc:
+                logger.warning("azure_ad_jwt.decode_error: %s", exc)
+
+        # Custom 2-part token (payload.hmac-signature) for email/password login
+        elif len(jwt_parts) == 2:
+            try:
+                payload_b64, sig = jwt_parts
+                # Verify HMAC signature
+                secret = os.environ.get("JWT_SECRET", os.environ.get("AzureWebJobsStorage", "default-secret"))
+                expected_sig = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
+                if hmac.compare_digest(sig, expected_sig):
+                    padded = payload_b64 + "=" * (4 - len(payload_b64) % 4)
+                    payload = json.loads(b64mod.urlsafe_b64decode(padded))
+                    import time
+                    if payload.get("exp", 0) > time.time():
+                        return {
+                            "email": payload.get("email", ""),
+                            "name": payload.get("name", ""),
+                            "roles": [payload.get("role", "user")],
+                            "oid": payload.get("email", ""),
+                        }
+            except Exception as exc:
+                logger.warning("bearer_token.decode_error: %s", exc)
+
+    # --- Check x-ms-client-principal (Azure EasyAuth / MSAL) ---
     principal_header = req.headers.get("x-ms-client-principal", "")
     if not principal_header:
         # Development fallback
@@ -232,10 +314,66 @@ def _verify_admin_password(req: func.HttpRequest) -> tuple[bool, str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  AUTH — Login (email / password)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route(route="v2/auth/login", methods=["POST"])
+async def auth_login(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Simple email/password login.
+    Returns a JWT-like token that the frontend stores in localStorage.
+    """
+    import hashlib, hmac, base64 as b64
+
+    try:
+        body = req.get_json()
+    except (ValueError, AttributeError):
+        return _json_response({"error": "Invalid JSON body"}, 400)
+
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password") or ""
+
+    if not email or not password:
+        return _json_response({"error": "Email and password are required"}, 400)
+
+    admin_email = os.environ.get("ADMIN_EMAIL", "HARINADH70@outlook.com").lower()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "")
+
+    if email != admin_email:
+        return _json_response({"error": "Invalid credentials"}, 401)
+
+    # Check password — support both plain-text and bcrypt
+    password_ok = False
+    try:
+        import bcrypt
+        if admin_password.startswith("$2"):
+            password_ok = bcrypt.checkpw(password.encode(), admin_password.encode())
+        else:
+            password_ok = (password == admin_password)
+    except ImportError:
+        password_ok = (password == admin_password)
+
+    if not password_ok:
+        return _json_response({"error": "Invalid credentials"}, 401)
+
+    # Build a simple signed token (HMAC-SHA256)
+    secret = os.environ.get("JWT_SECRET", os.environ.get("AzureWebJobsStorage", "default-secret"))
+    payload = json.dumps({"email": email, "name": email.split("@")[0], "role": "admin", "exp": int(__import__("time").time()) + 86400})
+    payload_b64 = b64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    sig = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
+    token = f"{payload_b64}.{sig}"
+
+    return _json_response({
+        "token": token,
+        "user": {"id": email, "email": email, "name": email.split("@")[0], "role": "admin"},
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  AUTH — Current User Info
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/auth/me", methods=["GET"])
+@app.route(route="v2/auth/me", methods=["GET"])
 async def auth_me(req: func.HttpRequest) -> func.HttpResponse:
     """Return current user information and role."""
     user = _get_user_from_header(req)
@@ -247,6 +385,7 @@ async def auth_me(req: func.HttpRequest) -> func.HttpResponse:
     )
 
     return _json_response({
+        "id": user.get("oid", user.get("email", "")),
         "email": user.get("email", ""),
         "name": user.get("name", ""),
         "role": "admin" if is_admin else "user",
@@ -287,7 +426,7 @@ async def health(req: func.HttpRequest) -> func.HttpResponse:
 #  MIGRATIONS — Create
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/migrations", methods=["POST"])
+@app.route(route="v2/migrations", methods=["POST"])
 async def create_migration(req: func.HttpRequest) -> func.HttpResponse:
     """Create a new migration job and enqueue it for processing."""
     from security import require_auth, validate_xml_files, check_rate_limit
@@ -697,7 +836,7 @@ def _parse_pom_metadata(pom_content: str) -> dict:
     return metadata
 
 
-@app.route(route="api/v2/migrations/upload", methods=["POST"])
+@app.route(route="v2/migrations/upload", methods=["POST"])
 async def upload_migration_zip(req: func.HttpRequest) -> func.HttpResponse:
     """
     Accept a multipart/form-data upload containing a MuleSoft project ZIP.
@@ -895,7 +1034,7 @@ async def upload_migration_zip(req: func.HttpRequest) -> func.HttpResponse:
 #  MIGRATIONS — List
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/migrations", methods=["GET"])
+@app.route(route="v2/migrations", methods=["GET"])
 async def list_migrations(req: func.HttpRequest) -> func.HttpResponse:
     """List migrations with pagination."""
     from security import require_auth
@@ -925,7 +1064,7 @@ async def list_migrations(req: func.HttpRequest) -> func.HttpResponse:
 #  MIGRATIONS — Stats (must be before /{id} route)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/stats/migrations", methods=["GET"])
+@app.route(route="v2/stats/migrations", methods=["GET"])
 async def migration_stats(req: func.HttpRequest) -> func.HttpResponse:
     """Return aggregate migration statistics."""
     from security import require_auth
@@ -945,7 +1084,7 @@ async def migration_stats(req: func.HttpRequest) -> func.HttpResponse:
 #  MIGRATIONS — Get single
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/migrations/{migration_id}", methods=["GET"])
+@app.route(route="v2/migrations/{migration_id}", methods=["GET"])
 async def get_migration(req: func.HttpRequest) -> func.HttpResponse:
     """Get a single migration by ID."""
     from security import require_auth
@@ -974,7 +1113,7 @@ async def get_migration(req: func.HttpRequest) -> func.HttpResponse:
 #  MIGRATIONS — Get files
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/migrations/{migration_id}/files", methods=["GET"])
+@app.route(route="v2/migrations/{migration_id}/files", methods=["GET"])
 async def get_migration_files(req: func.HttpRequest) -> func.HttpResponse:
     """Get all generated files for a migration."""
     from security import require_auth
@@ -1012,7 +1151,7 @@ async def get_migration_files(req: func.HttpRequest) -> func.HttpResponse:
 #  MIGRATIONS — Get single file
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/migrations/{migration_id}/files/{file_path}", methods=["GET"])
+@app.route(route="v2/migrations/{migration_id}/files/{file_path}", methods=["GET"])
 async def get_migration_file(req: func.HttpRequest) -> func.HttpResponse:
     """Get a single generated file by path."""
     from security import require_auth
@@ -1060,7 +1199,7 @@ async def get_migration_file(req: func.HttpRequest) -> func.HttpResponse:
 #  MIGRATIONS — Delete (soft)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/migrations/{migration_id}", methods=["DELETE"])
+@app.route(route="v2/migrations/{migration_id}", methods=["DELETE"])
 async def delete_migration(req: func.HttpRequest) -> func.HttpResponse:
     """Soft-delete a migration."""
     from security import require_auth
@@ -1084,7 +1223,7 @@ async def delete_migration(req: func.HttpRequest) -> func.HttpResponse:
 #  MIGRATIONS — Cancel
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/migrations/{migration_id}/cancel", methods=["POST"])
+@app.route(route="v2/migrations/{migration_id}/cancel", methods=["POST"])
 async def cancel_migration(req: func.HttpRequest) -> func.HttpResponse:
     """Cancel a running or queued migration."""
     from security import require_auth
@@ -1125,10 +1264,90 @@ async def cancel_migration(req: func.HttpRequest) -> func.HttpResponse:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  MIGRATIONS — Retry (re-enqueue failed/stuck)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route(route="v2/migrations/{migration_id}/retry", methods=["POST"])
+async def retry_migration(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Retry a failed or stuck migration by resetting its status to 'queued'
+    and re-enqueuing it to the migration queue.
+
+    Allowed source states: failed, running (stuck for >10 min), cancelled.
+    """
+    from security import require_auth
+    import db as database
+
+    headers = _get_headers(req)
+    try:
+        user = require_auth(headers)
+    except ValueError as exc:
+        return _error_response(str(exc), 401, "UNAUTHORIZED")
+
+    migration_id = req.route_params.get("migration_id", "")
+    migration = await database.get_migration(migration_id)
+    if not migration:
+        return _error_response("Migration not found.", 404, "NOT_FOUND")
+
+    status = migration["status"]
+    retryable = {"failed", "cancelled"}
+
+    # Also allow retrying "running" if stuck for more than 10 minutes
+    if status == "running":
+        started = migration.get("started_at")
+        if started:
+            if isinstance(started, str):
+                started = datetime.fromisoformat(started)
+            elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+            if elapsed > 600:  # >10 min = stuck
+                retryable.add("running")
+            else:
+                return _error_response(
+                    f"Migration is still running (started {int(elapsed)}s ago). "
+                    "Wait at least 10 minutes before retrying.",
+                    409, "STILL_RUNNING",
+                )
+        else:
+            retryable.add("running")  # No start time = definitely stuck
+
+    if status not in retryable:
+        return _error_response(
+            f"Cannot retry migration in '{status}' state. "
+            "Only failed, cancelled, or stuck (>10min running) migrations can be retried.",
+            409, "INVALID_STATE",
+        )
+
+    # Reset status and re-enqueue
+    await database.update_migration(migration_id, {
+        "status": "queued",
+        "started_at": None,
+        "completed_at": None,
+        "duration_ms": None,
+        "summary": None,
+    })
+
+    # Re-enqueue to migration queue
+    _enqueue_message("migration-queue", {
+        "migration_id": migration_id,
+        "enqueued_at": datetime.now(timezone.utc).isoformat(),
+        "retry": True,
+    })
+
+    logger.info("migration.retried: id=%s previous_status=%s user=%s",
+                migration_id, status, user.get("email", "unknown"))
+
+    return _json_response({
+        "status": "queued",
+        "migration_id": migration_id,
+        "message": f"Migration re-queued for processing (was '{status}').",
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  BUILDS — Create
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/builds", methods=["POST"])
+@app.route(route="v2/builds", methods=["POST"])
 async def create_build(req: func.HttpRequest) -> func.HttpResponse:
     """Trigger a Maven build for a completed migration."""
     from security import require_auth
@@ -1180,7 +1399,7 @@ async def create_build(req: func.HttpRequest) -> func.HttpResponse:
 #  BUILDS — Get status
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/builds/{build_id}", methods=["GET"])
+@app.route(route="v2/builds/{build_id}", methods=["GET"])
 async def get_build(req: func.HttpRequest) -> func.HttpResponse:
     """Get build status by ID."""
     from security import require_auth
@@ -1204,7 +1423,7 @@ async def get_build(req: func.HttpRequest) -> func.HttpResponse:
 #  RAG — Search
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/rag/search", methods=["POST"])
+@app.route(route="v2/rag/search", methods=["POST"])
 async def rag_search(req: func.HttpRequest) -> func.HttpResponse:
     """Semantic search over migration knowledge base."""
     from security import require_auth
@@ -1253,7 +1472,7 @@ async def rag_search(req: func.HttpRequest) -> func.HttpResponse:
 #  RAG — Collections (Knowledge Base overview)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/rag/collections", methods=["GET"])
+@app.route(route="v2/rag/collections", methods=["GET"])
 async def rag_collections(req: func.HttpRequest) -> func.HttpResponse:
     """Get RAG knowledge base collections overview."""
     import db as database
@@ -1296,7 +1515,7 @@ async def rag_collections(req: func.HttpRequest) -> func.HttpResponse:
         })
 
 
-@app.route(route="api/v2/rag/documents", methods=["GET"])
+@app.route(route="v2/rag/documents", methods=["GET"])
 async def rag_documents(req: func.HttpRequest) -> func.HttpResponse:
     """List RAG documents with pagination, optionally filtered by category."""
     import db as database
@@ -1345,7 +1564,7 @@ async def rag_documents(req: func.HttpRequest) -> func.HttpResponse:
         return _json_response({"documents": [], "total": 0, "error": str(exc)})
 
 
-@app.route(route="api/v2/rag/seed", methods=["POST"])
+@app.route(route="v2/rag/seed", methods=["POST"])
 async def rag_seed(req: func.HttpRequest) -> func.HttpResponse:
     """Seed the RAG knowledge base with MuleSoft->Spring Boot migration patterns. Admin only."""
     from security import require_auth
@@ -1388,7 +1607,7 @@ async def rag_seed(req: func.HttpRequest) -> func.HttpResponse:
 #  RAG — Add Document (admin only)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/rag/documents", methods=["POST"])
+@app.route(route="v2/rag/documents", methods=["POST"])
 async def rag_add_document(req: func.HttpRequest) -> func.HttpResponse:
     """Add a document to the RAG knowledge base. Admin only."""
     from security import require_auth
@@ -1449,7 +1668,7 @@ async def rag_add_document(req: func.HttpRequest) -> func.HttpResponse:
 #  RAG — Get Single Document
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/rag/documents/{doc_id}", methods=["GET"])
+@app.route(route="v2/rag/documents/{doc_id}", methods=["GET"])
 async def rag_document_detail(req: func.HttpRequest) -> func.HttpResponse:
     """Get a single RAG document by ID with full content."""
     import db as database
@@ -1479,7 +1698,7 @@ async def rag_document_detail(req: func.HttpRequest) -> func.HttpResponse:
 #  RAG — Delete Document (admin + password)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/rag/documents/{doc_id}", methods=["DELETE"])
+@app.route(route="v2/rag/documents/{doc_id}", methods=["DELETE"])
 async def rag_delete_document(req: func.HttpRequest) -> func.HttpResponse:
     """Delete a RAG document. Admin only, requires password verification."""
     from security import require_auth
@@ -1529,7 +1748,7 @@ async def rag_delete_document(req: func.HttpRequest) -> func.HttpResponse:
 #  RAG — Delete Collection (admin + password)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/rag/collections/{collection_name}", methods=["DELETE"])
+@app.route(route="v2/rag/collections/{collection_name}", methods=["DELETE"])
 async def rag_delete_collection(req: func.HttpRequest) -> func.HttpResponse:
     """Delete an entire RAG collection. Admin only, requires password verification."""
     from security import require_auth
@@ -1604,7 +1823,7 @@ async def rag_delete_collection(req: func.HttpRequest) -> func.HttpResponse:
 #  GITHUB — Push
 # ═══════════════════════════════════════════════════════════════════════════
 
-@app.route(route="api/v2/github/push", methods=["POST"])
+@app.route(route="v2/github/push", methods=["POST"])
 async def github_push(req: func.HttpRequest) -> func.HttpResponse:
     """Push generated migration files to a GitHub repository."""
     from security import require_auth
@@ -1696,6 +1915,18 @@ async def migration_worker(msg: func.QueueMessage) -> None:
         logger.info("migration_worker.already_cancelled: id=%s", migration_id)
         return
 
+    # If already completed, skip (idempotency for queue retries)
+    if migration["status"] == "completed":
+        logger.info("migration_worker.already_completed: id=%s", migration_id)
+        return
+
+    # If already "running" from a previous crashed attempt, log and continue
+    if migration["status"] == "running":
+        logger.warning(
+            "migration_worker.recovering_stuck: id=%s started_at=%s",
+            migration_id, migration.get("started_at"),
+        )
+
     # Mark as running
     await database.update_migration(migration_id, {
         "status": "running",
@@ -1728,6 +1959,10 @@ async def migration_worker(msg: func.QueueMessage) -> None:
         dw_scripts = migration.get("dataweave_scripts") or "{}"
         if isinstance(dw_scripts, str):
             dw_scripts = json.loads(dw_scripts)
+
+        logger.info("worker.llm_config: migration_id=%s enabled=%s provider=%s model=%s keys=%s",
+                    migration_id, llm_cfg.get("enabled"), llm_cfg.get("provider"),
+                    llm_cfg.get("model"), list(llm_cfg.keys()) if isinstance(llm_cfg, dict) else type(llm_cfg).__name__)
 
         result = await run_migration_pipeline(
             migration_id=migration_id,
@@ -1860,3 +2095,395 @@ async def build_worker(msg: func.QueueMessage) -> None:
             "build_log": f"Build error: {exc}",
             "completed_at": datetime.now(timezone.utc),
         })
+
+
+# ============================================================================
+#  VALIDATION ENDPOINTS — Deploy & compare Spring Boot vs MuleSoft
+# ============================================================================
+
+@app.route(
+    route="v2/validations",
+    methods=["POST", "OPTIONS"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+async def create_validation(req: func.HttpRequest) -> func.HttpResponse:
+    """Create a validation job → enqueue deploy."""
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=_cors_headers())
+    try:
+        import db as database
+        user = _get_user_from_header(req)
+        body = req.get_json()
+
+        if not body.get("migration_id"):
+            return _error_response("migration_id is required")
+
+        # Verify migration exists and is completed
+        migration = await database.get_migration(body["migration_id"])
+        if not migration:
+            return _error_response("Migration not found", 404)
+        if migration.get("status") != "completed":
+            return _error_response("Migration must be completed before validation")
+
+        validation = await database.create_validation(body, user_id=None)
+
+        # Enqueue the deploy job
+        _enqueue_message("validation-queue", {
+            "validation_id": validation["id"],
+            "migration_id": body["migration_id"],
+        })
+
+        return _json_response(validation, 201)
+    except Exception as exc:
+        logger.error("create_validation.error: %s", exc, exc_info=True)
+        return _error_response(str(exc), 500)
+
+
+@app.route(
+    route="v2/validations/{validation_id}",
+    methods=["GET", "OPTIONS"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+async def get_validation(req: func.HttpRequest) -> func.HttpResponse:
+    """Get validation status + app URL."""
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=_cors_headers())
+    try:
+        import db as database
+        validation_id = req.route_params.get("validation_id", "")
+        validation = await database.get_validation(validation_id)
+        if not validation:
+            return _error_response("Validation not found", 404)
+        return _json_response(validation)
+    except Exception as exc:
+        logger.error("get_validation.error: %s", exc, exc_info=True)
+        return _error_response(str(exc), 500)
+
+
+@app.route(
+    route="v2/migrations/{migration_id}/validations",
+    methods=["GET", "OPTIONS"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+async def list_migration_validations(req: func.HttpRequest) -> func.HttpResponse:
+    """List all validations for a migration."""
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=_cors_headers())
+    try:
+        import db as database
+        migration_id = req.route_params.get("migration_id", "")
+        validations = await database.list_validations_for_migration(migration_id)
+        return _json_response({"items": validations, "total": len(validations)})
+    except Exception as exc:
+        logger.error("list_validations.error: %s", exc, exc_info=True)
+        return _error_response(str(exc), 500)
+
+
+@app.route(
+    route="v2/validations/{validation_id}/compare",
+    methods=["POST", "OPTIONS"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+async def run_validation_compare(req: func.HttpRequest) -> func.HttpResponse:
+    """Run server-side auto-compare: call both MuleSoft & Spring Boot endpoints."""
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=_cors_headers())
+    try:
+        import db as database
+        from validation_service import run_comparison, _detect_api_base_path
+
+        validation_id = req.route_params.get("validation_id", "")
+        validation = await database.get_validation(validation_id)
+        if not validation:
+            return _error_response("Validation not found", 404)
+        if validation.get("status") != "running":
+            return _error_response("Validation must be in 'running' state to compare")
+
+        mulesoft_url = validation.get("mulesoft_base_url", "")
+        springboot_url = validation.get("app_url", "")
+        test_endpoints = validation.get("test_endpoints", [])
+
+        if not mulesoft_url or not springboot_url:
+            return _error_response("Both MuleSoft and Spring Boot URLs are required")
+
+        # Detect controller base path (e.g. "/api/v1") to prepend to Spring Boot URLs
+        migration_id = validation.get("migration_id", "")
+        springboot_base_path = ""
+        if migration_id:
+            migration = await database.get_migration(str(migration_id))
+            if migration:
+                output_files = migration.get("output_files") or {}
+                springboot_base_path = _detect_api_base_path(output_files)
+                if springboot_base_path:
+                    logger.info("run_compare.base_path: %s", springboot_base_path)
+
+        results = await run_comparison(
+            mulesoft_url, springboot_url, test_endpoints,
+            springboot_base_path=springboot_base_path,
+        )
+
+        await database.update_validation(validation_id, {
+            "test_results": results,
+        })
+
+        return _json_response({"results": results})
+    except Exception as exc:
+        logger.error("run_compare.error: %s", exc, exc_info=True)
+        return _error_response(str(exc), 500)
+
+
+@app.route(
+    route="v2/validations/{validation_id}/verdict",
+    methods=["POST", "OPTIONS"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+async def submit_validation_verdict(req: func.HttpRequest) -> func.HttpResponse:
+    """Submit a manual verdict (pass/fail/partial) for a validation."""
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=_cors_headers())
+    try:
+        import db as database
+        validation_id = req.route_params.get("validation_id", "")
+        body = req.get_json()
+        verdict = body.get("verdict", "")
+        if verdict not in ("pass", "fail", "partial"):
+            return _error_response("verdict must be 'pass', 'fail', or 'partial'")
+
+        validation = await database.get_validation(validation_id)
+        if not validation:
+            return _error_response("Validation not found", 404)
+
+        updated = await database.update_validation(validation_id, {
+            "user_verdict": verdict,
+            "status": "completed",
+        })
+        return _json_response(updated)
+    except Exception as exc:
+        logger.error("submit_verdict.error: %s", exc, exc_info=True)
+        return _error_response(str(exc), 500)
+
+
+@app.route(
+    route="v2/validations/{validation_id}/teardown",
+    methods=["POST", "OPTIONS"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+async def manual_teardown(req: func.HttpRequest) -> func.HttpResponse:
+    """Manually tear down the ACI container early."""
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=_cors_headers())
+    try:
+        import db as database
+        from validation_service import teardown_aci
+
+        validation_id = req.route_params.get("validation_id", "")
+        validation = await database.get_validation(validation_id)
+        if not validation:
+            return _error_response("Validation not found", 404)
+
+        aci_name = validation.get("aci_name")
+        if not aci_name:
+            return _error_response("No ACI container to tear down")
+
+        success = await teardown_aci(validation_id, aci_name)
+        if success:
+            await database.update_validation(validation_id, {
+                "status": "completed",
+                "torn_down_at": datetime.now(timezone.utc),
+            })
+            return _json_response({"message": "Container torn down successfully"})
+        else:
+            return _error_response("Teardown failed", 500)
+    except Exception as exc:
+        logger.error("manual_teardown.error: %s", exc, exc_info=True)
+        return _error_response(str(exc), 500)
+
+
+@app.route(
+    route="v2/validations/{validation_id}/logs",
+    methods=["GET", "OPTIONS"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+async def get_validation_logs(req: func.HttpRequest) -> func.HttpResponse:
+    """Fetch container logs from ACI."""
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=204, headers=_cors_headers())
+    try:
+        import db as database
+        from validation_service import get_container_logs
+
+        validation_id = req.route_params.get("validation_id", "")
+        validation = await database.get_validation(validation_id)
+        if not validation:
+            return _error_response("Validation not found", 404)
+
+        aci_name = validation.get("aci_name")
+        if not aci_name:
+            # Fall back to table storage logs (deploy phase)
+            client = None
+            try:
+                from azure.data.tables.aio import TableServiceClient
+                conn_str = os.getenv("AzureWebJobsStorage", "")
+                if conn_str and conn_str != "UseDevelopmentStorage=true":
+                    service = TableServiceClient.from_connection_string(conn_str)
+                    client = service.get_table_client("validationlogs")
+                    entities = []
+                    async for entity in client.query_entities(f"PartitionKey eq '{validation_id}'"):
+                        entities.append(entity)
+                    entities.sort(key=lambda e: e.get("RowKey", ""))
+                    lines = [e.get("line", "") for e in entities]
+                    return _json_response({"logs": "\n".join(lines)})
+            except Exception:
+                pass
+            return _json_response({"logs": "No logs available yet"})
+
+        logs = await get_container_logs(aci_name)
+        return _json_response({"logs": logs})
+    except Exception as exc:
+        logger.error("get_validation_logs.error: %s", exc, exc_info=True)
+        return _error_response(str(exc), 500)
+
+
+# ---------------------------------------------------------------------------
+#  Queue Triggers — Validation
+# ---------------------------------------------------------------------------
+
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name="validation-queue",
+    connection="AzureWebJobsStorage",
+)
+async def validation_worker(msg: func.QueueMessage) -> None:
+    """
+    Build image via ACR Tasks → Deploy ACI → Health check → Set running
+    → Enqueue delayed teardown.
+    """
+    import db as database
+    from validation_service import build_and_push_image, deploy_aci, wait_for_health, _detect_server_port
+
+    payload = json.loads(msg.get_body().decode("utf-8"))
+    validation_id = payload["validation_id"]
+    migration_id = payload["migration_id"]
+
+    logger.info("validation_worker.start: %s", validation_id)
+
+    try:
+        # Update status to building
+        await database.update_validation(validation_id, {"status": "building_image"})
+
+        # Get migration output files
+        migration = await database.get_migration(migration_id)
+        if not migration:
+            await database.update_validation(validation_id, {
+                "status": "failed",
+                "error": f"Migration {migration_id} not found",
+            })
+            return
+
+        output_files = migration.get("output_files") or {}
+        if not output_files:
+            await database.update_validation(validation_id, {
+                "status": "failed",
+                "error": "No output files to deploy",
+            })
+            return
+
+        validation = await database.get_validation(validation_id)
+        java_version = validation.get("java_version", "17")
+        keep_alive_min = validation.get("keep_alive_min", 15)
+
+        # Step 1: Build and push Docker image via ACR Tasks
+        image_ref = await build_and_push_image(
+            validation_id, output_files, java_version
+        )
+        await database.update_validation(validation_id, {
+            "status": "deploying",
+            "acr_image_tag": image_ref,
+        })
+
+        # Detect server port from generated config (matches Dockerfile HEALTHCHECK)
+        server_port = _detect_server_port(output_files)
+
+        # Step 2: Deploy to ACI
+        aci_info = await deploy_aci(
+            validation_id, image_ref, java_version, keep_alive_min, server_port
+        )
+        await database.update_validation(validation_id, {
+            "aci_name": aci_info["aci_name"],
+            "aci_fqdn": aci_info["aci_fqdn"],
+            "app_url": aci_info["app_url"],
+        })
+
+        # Step 3: Wait for health check
+        healthy = await wait_for_health(aci_info["app_url"], timeout=180)
+        if not healthy:
+            await database.update_validation(validation_id, {
+                "status": "failed",
+                "error": "Health check timed out after 180s",
+            })
+            return
+
+        # Step 4: Mark as running
+        now = datetime.now(timezone.utc)
+        from datetime import timedelta
+        expires_at = now + timedelta(minutes=keep_alive_min)
+
+        await database.update_validation(validation_id, {
+            "status": "running",
+            "deployed_at": now,
+            "expires_at": expires_at,
+        })
+
+        # Step 5: Enqueue delayed teardown
+        _enqueue_message_delayed(
+            "validation-teardown-queue",
+            {"validation_id": validation_id, "aci_name": aci_info["aci_name"]},
+            visibility_timeout=keep_alive_min * 60,
+        )
+
+        logger.info(
+            "validation_worker.deployed: %s url=%s expires=%s",
+            validation_id, aci_info["app_url"], expires_at.isoformat(),
+        )
+
+    except Exception as exc:
+        logger.error(
+            "validation_worker.failed: %s error=%s",
+            validation_id, exc, exc_info=True,
+        )
+        await database.update_validation(validation_id, {
+            "status": "failed",
+            "error": str(exc),
+        })
+
+
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name="validation-teardown-queue",
+    connection="AzureWebJobsStorage",
+)
+async def validation_teardown_worker(msg: func.QueueMessage) -> None:
+    """Auto-teardown ACI container after keep_alive expires."""
+    import db as database
+    from validation_service import teardown_aci
+
+    payload = json.loads(msg.get_body().decode("utf-8"))
+    validation_id = payload["validation_id"]
+    aci_name = payload["aci_name"]
+
+    logger.info("validation_teardown.start: %s", validation_id)
+
+    # Check if already torn down or completed
+    validation = await database.get_validation(validation_id)
+    if validation and validation.get("status") in ("completed", "failed"):
+        logger.info("validation_teardown.skip: %s already %s", validation_id, validation["status"])
+        return
+    if validation and validation.get("torn_down_at"):
+        logger.info("validation_teardown.skip: %s already torn down", validation_id)
+        return
+
+    success = await teardown_aci(validation_id, aci_name)
+    await database.update_validation(validation_id, {
+        "status": "expired",
+        "torn_down_at": datetime.now(timezone.utc),
+    })

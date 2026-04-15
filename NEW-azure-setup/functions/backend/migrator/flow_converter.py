@@ -59,11 +59,40 @@ class FlowConverter:
         salesforce_flows = []
         sqs_flows = []
         other_flows = []
+        apikit_flows = []           # APIkit-routed flows (no source)
+
+        # ── Detect APIkit pattern ─────────────────────────────────────
+        # APIkit flows have names like "get:\policies:insurance-api-router"
+        # They have no source (source=None) and are children of an
+        # APIkit router.  Detect the router config name from apikit_configs
+        # or from the main flow's apikit:router processor.
+        apikit_router_configs = set()
+        for cfg in parsed_data.get("apikit_configs", []):
+            apikit_router_configs.add(cfg.get("name", ""))
+        # Also detect from flows whose processors include apikit:router
+        for flow in parsed_data.get("flows", []):
+            for proc in flow.get("processors", []):
+                if proc.get("type") in ("apikit:router", "apikit-router"):
+                    ref = proc.get("attributes", {}).get("config-ref", "")
+                    if ref:
+                        apikit_router_configs.add(ref)
+
+        _APIKIT_NAME_RE = re.compile(
+            r'^(get|post|put|patch|delete|head|options):'  # HTTP method
+            r'\\(.+?)'                                     # path
+            r'(?::application\\[a-z]+)?'                   # optional content-type
+            r':(.+)$'                                      # router config
+        )
 
         for flow in parsed_data.get("flows", []):
             source = flow.get("source")
             if not source:
-                other_flows.append(flow)
+                # Check if this is an APIkit flow by name pattern
+                m = _APIKIT_NAME_RE.match(flow.get("name", ""))
+                if m:
+                    apikit_flows.append(flow)
+                else:
+                    other_flows.append(flow)
             elif source["type"] == "http-listener":
                 http_flows.append(flow)
             elif source["type"] == "scheduler":
@@ -88,6 +117,18 @@ class FlowConverter:
                 other_flows.append(flow)
 
         # ── Generate code per category ────────────────────────────────
+
+        # APIkit flows → proper REST controller with individual endpoints
+        if apikit_flows:
+            ctrl_files = self._generate_apikit_controller(
+                apikit_flows, http_flows, parsed_data)
+            files.update(ctrl_files)
+            # Remove the main flow from http_flows so it doesn't generate
+            # a duplicate catch-all controller
+            http_flows = [f for f in http_flows
+                          if not any(p.get("type") in ("apikit:router", "apikit-router")
+                                     for p in f.get("processors", []))]
+
         if http_flows:
             controllers = self._group_flows_by_config(http_flows)
             for cfg_name, flows in controllers.items():
@@ -148,13 +189,36 @@ class FlowConverter:
             cls = self._to_class_name(job["name"]) + "BatchConfig"
             files[f"batch/{cls}.java"] = self._generate_batch_job(cls, job, parsed_data)
 
-        # Global error handler
+        # Global error handler + exception classes
         error_handlers = parsed_data.get("error_handlers", [])
         has_flow_errors = any(
             f.get("error_handler") for f in parsed_data.get("flows", []))
         if error_handlers or has_flow_errors:
             files["exception/GlobalExceptionHandler.java"] = \
                 self._generate_exception_handler(error_handlers, parsed_data)
+        # Always generate exception classes (used by GlobalExceptionHandler and service code)
+        files["exception/ResourceNotFoundException.java"] = (
+            'package com.example.exception;\n\n'
+            'public class ResourceNotFoundException extends RuntimeException {\n'
+            '    public ResourceNotFoundException(String message) {\n'
+            '        super(message);\n'
+            '    }\n'
+            '    public ResourceNotFoundException(String message, Throwable cause) {\n'
+            '        super(message, cause);\n'
+            '    }\n'
+            '}\n'
+        )
+        files["exception/BadRequestException.java"] = (
+            'package com.example.exception;\n\n'
+            'public class BadRequestException extends RuntimeException {\n'
+            '    public BadRequestException(String message) {\n'
+            '        super(message);\n'
+            '    }\n'
+            '    public BadRequestException(String message, Throwable cause) {\n'
+            '        super(message, cause);\n'
+            '    }\n'
+            '}\n'
+        )
 
         return files
 
@@ -199,9 +263,9 @@ class FlowConverter:
                     if any(p in java_expr for p in ["request.", "attributes.", "vars."]):
                         lines.append(f'{px}// TODO: Convert MuleSoft expression: {value}')
                     else:
-                        lines.append(f"{px}Object payload = {java_expr};")
+                        lines.append(f"{px}payload = {java_expr};")
                 else:
-                    lines.append(f'{px}Object payload = "{self._escape_java(value)}";')
+                    lines.append(f'{px}payload = "{self._escape_java(value)}";')
                 if mime:
                     lines.append(f'{px}// MIME type: {mime}')
 
@@ -229,14 +293,44 @@ class FlowConverter:
                     java_code = result.get("java_code", "").strip()
                     # Skip no-op transforms (just "payload")
                     if java_code and java_code != "payload":
-                        # Avoid duplicate variable names - rename "result" to "transformed"
-                        java_code = java_code.replace(
-                            "result = ((List", "transformed = ((List"
-                        ).replace(
-                            "result = ((Map", "transformed = ((Map"
+                        # Validate the converted code is actually Java, not
+                        # leftover DataWeave.  Common DW-syntax leaks:
+                        _dw_leak = (
+                            " map {" in java_code or
+                            " map\n" in java_code or
+                            re.search(r"^\s*\w+:\s+\w+\.get\(", java_code, re.MULTILINE) or
+                            re.search(r"^\s*\{\s*success:", java_code, re.MULTILINE) or
+                            "format:" in java_code or
+                            " filter {" in java_code or
+                            # DW object literal: { key: value, ... } in Java context
+                            re.search(r'\.put\(\s*"[^"]+"\s*,\s*\{', java_code) or
+                            # DW-style field access: p.field_name without .get()
+                            re.search(r'\b[a-z]\w*\.[a-z_]+\s*[,})]', java_code) or
+                            # DW reduce/map/filter operators
+                            " reduce " in java_code or
+                            # DW sizeOf function
+                            "sizeOf(" in java_code or
+                            # DW ternary with 'if' keyword: value if condition
+                            re.search(r'\w+\s+if\s+\w+', java_code) or
+                            # DW 'as' type coercion
+                            re.search(r'\bas\s+(String|Number|Date)', java_code)
                         )
-                        for dw_line in java_code.split("\n"):
-                            lines.append(f"{px}{dw_line}")
+                        if _dw_leak:
+                            # Wrap raw DW as a TODO comment instead of
+                            # emitting broken Java
+                            lines.append(f"{px}// TODO: Convert the following DataWeave transform to Java")
+                            for dw_line in dw_script.strip().split("\n"):
+                                lines.append(f"{px}// DW: {dw_line}")
+                            lines.append(f"{px}Map<String, Object> transformed = new LinkedHashMap<>();")
+                            lines.append(f"{px}// Populate 'transformed' map from the DataWeave logic above")
+                            imports.add("java.util.LinkedHashMap")
+                            imports.add("java.util.Map")
+                        else:
+                            # Comprehensively rename "result" variable to "transformed"
+                            # to avoid conflicts with other variables in scope
+                            java_code = re.sub(r'\bresult\b', 'transformed', java_code)
+                            for dw_line in java_code.split("\n"):
+                                lines.append(f"{px}{dw_line}")
                         # Update payload to transformed result
                         lines.append(f"{px}payload = transformed;")
                     if result.get("warnings"):
@@ -254,8 +348,7 @@ class FlowConverter:
             # ── scatter-gather (parallel execution) ───────────────
             elif tag == "scatter-gather":
                 imports.add("java.util.concurrent.CompletableFuture")
-                imports.add("java.util.concurrent.ExecutorService")
-                imports.add("java.util.concurrent.Executors")
+                imports.add("java.util.List")
                 lines.append(f"{px}// Scatter-Gather: parallel execution")
                 routes = [c for c in proc.get("children", []) if c.get("tag") == "route"]
                 for i, route in enumerate(routes):
@@ -270,7 +363,7 @@ class FlowConverter:
                     lines.append(f"{px}}});")
                 futures = ", ".join(f"future{i}" for i in range(len(routes)))
                 lines.append(f"{px}CompletableFuture.allOf({futures}).join();")
-                lines.append(f"{px}List<Object> scatterResults = List.of({', '.join(f'future{i}.get()' for i in range(len(routes)))});")
+                lines.append(f"{px}List<Object> scatterResults = List.of({', '.join(f'future{i}.join()' for i in range(len(routes)))});")
 
             # ── for-each ──────────────────────────────────────────
             elif tag in ("foreach", "for-each"):
@@ -406,7 +499,13 @@ class FlowConverter:
             elif tag == "flow-ref":
                 ref_name = attrs.get("name", "")
                 method = self._to_method_name(ref_name)
-                svc_name = self._to_class_name(ref_name) + "Service"
+                # Derive service class from prefix (same grouping as _generate_services)
+                if ":" in ref_name:
+                    svc_prefix = ref_name.split(":")[0]
+                else:
+                    _parts = re.split(r"[-_\s]", ref_name)
+                    svc_prefix = _parts[0] if _parts else "Common"
+                svc_name = self._to_class_name(svc_prefix) + "Service"
                 svc_var  = self._to_variable_name(svc_name)
                 service_deps.add((svc_name, svc_var))
                 lines.append(f"{px}Object payload = {svc_var}.{method}();")
@@ -644,55 +743,74 @@ class FlowConverter:
         method = attrs.get("method", "GET")
         path   = attrs.get("path", "/")
         cfg    = attrs.get("config-ref", "")
+        # Use config-ref to build a bean name for the WebClient
+        bean_name = self._to_variable_name(cfg) + "WebClient" if cfg else "webClient"
         imports.update(["org.springframework.web.reactive.function.client.WebClient",
                         "org.springframework.http.HttpMethod"])
-        deps.add(("WebClient.Builder", "webClientBuilder"))
+        deps.add(("WebClient", bean_name))
         lines.append(f'{px}// HTTP Request → {method} {path} (config: {cfg})')
-        lines.append(f'{px}String response = webClientBuilder.build()')
+        lines.append(f'{px}String response = {bean_name}')
         lines.append(f'{px}    .method(HttpMethod.{method})')
-        lines.append(f'{px}    .uri(externalApiUrl + "{path}")')
+        lines.append(f'{px}    .uri("{path}")')
         lines.append(f'{px}    .retrieve()')
         lines.append(f'{px}    .bodyToMono(String.class)')
         lines.append(f'{px}    .block();')
-        lines.append(f'{px}Object payload = response;')
+        lines.append(f'{px}payload = response;')
 
     # ── Database Select ───────────────────────────────────────────────────
+    def _db_bean_name(self, attrs):
+        """Derive JdbcTemplate bean name from config-ref for multi-datasource support."""
+        cfg = attrs.get("config-ref", "")
+        if cfg:
+            return self._to_variable_name(cfg) + "JdbcTemplate"
+        return "jdbcTemplate"
+
     def _convert_db_select(self, proc, attrs, lines, imports, deps, px):
         sql = self._extract_sql(proc)
         imports.add("org.springframework.jdbc.core.JdbcTemplate")
-        deps.add(("JdbcTemplate", "jdbcTemplate"))
+        imports.add("java.util.List")
+        imports.add("java.util.Map")
+        jdbc_bean = self._db_bean_name(attrs)
+        deps.add(("JdbcTemplate", jdbc_bean))
         params = self._extract_db_params(proc)
-        lines.append(f'{px}List<Map<String, Object>> result = jdbcTemplate.queryForList(')
+        # Escape multiline SQL into a single Java string
+        sql_escaped = sql.strip().replace("\n", " ").replace("  ", " ")
+        lines.append(f'{px}List<Map<String, Object>> queryResult = {jdbc_bean}.queryForList(')
         if params:
-            lines.append(f'{px}    "{sql}",')
+            lines.append(f'{px}    "{sql_escaped}",')
             lines.append(f'{px}    {params}')
         else:
-            lines.append(f'{px}    "{sql}"')
+            lines.append(f'{px}    "{sql_escaped}"')
         lines.append(f'{px});')
-        lines.append(f'{px}Object payload = result;')
+        lines.append(f'{px}payload = queryResult;')
 
     # ── Database Write (insert/update/delete) ─────────────────────────────
     def _convert_db_write(self, proc, attrs, lines, imports, deps, px, op):
         sql = self._extract_sql(proc)
         imports.add("org.springframework.jdbc.core.JdbcTemplate")
-        deps.add(("JdbcTemplate", "jdbcTemplate"))
+        jdbc_bean = self._db_bean_name(attrs)
+        deps.add(("JdbcTemplate", jdbc_bean))
         params = self._extract_db_params(proc)
-        lines.append(f'{px}int rowsAffected = jdbcTemplate.update(')
+        # Escape multiline SQL into a single Java string
+        sql_escaped = sql.strip().replace("\n", " ").replace("  ", " ")
+        lines.append(f'{px}int rowsAffected = {jdbc_bean}.update(')
         if params:
-            lines.append(f'{px}    "{sql}",')
+            lines.append(f'{px}    "{sql_escaped}",')
             lines.append(f'{px}    {params}')
         else:
-            lines.append(f'{px}    "{sql}"')
+            lines.append(f'{px}    "{sql_escaped}"')
         lines.append(f'{px});')
         lines.append(f'{px}log.info("{op}: {{}} rows affected", rowsAffected);')
+        lines.append(f'{px}payload = Map.of("rowsAffected", rowsAffected);')
 
     # ── Database Stored Procedure ─────────────────────────────────────────
     def _convert_db_stored_proc(self, proc, attrs, lines, imports, deps, px):
         imports.update(["org.springframework.jdbc.core.JdbcTemplate",
                         "org.springframework.jdbc.core.simple.SimpleJdbcCall"])
-        deps.add(("JdbcTemplate", "jdbcTemplate"))
+        jdbc_bean = self._db_bean_name(attrs)
+        deps.add(("JdbcTemplate", jdbc_bean))
         proc_name = attrs.get("storedProcedureName", self._extract_sql(proc))
-        lines.append(f'{px}SimpleJdbcCall jdbcCall = new SimpleJdbcCall(jdbcTemplate)')
+        lines.append(f'{px}SimpleJdbcCall jdbcCall = new SimpleJdbcCall({jdbc_bean})')
         lines.append(f'{px}    .withProcedureName("{proc_name}");')
         lines.append(f'{px}Map<String, Object> result = jdbcCall.execute();')
 
@@ -701,13 +819,14 @@ class FlowConverter:
         sql = self._extract_sql(proc)
         imports.update(["org.springframework.jdbc.core.JdbcTemplate",
                         "java.util.List", "java.util.Map"])
-        deps.add(("JdbcTemplate", "jdbcTemplate"))
+        jdbc_bean = self._db_bean_name(attrs)
+        deps.add(("JdbcTemplate", jdbc_bean))
         lines.append(f'{px}// Bulk insert')
         lines.append(f'{px}List<Object[]> batchArgs = new java.util.ArrayList<>();')
         lines.append(f'{px}for (Object item : (List<?>) payload) {{')
         lines.append(f'{px}    batchArgs.add(new Object[]{{item}});')
         lines.append(f'{px}}}')
-        lines.append(f'{px}int[] results = jdbcTemplate.batchUpdate("{sql}", batchArgs);')
+        lines.append(f'{px}int[] results = {jdbc_bean}.batchUpdate("{sql}", batchArgs);')
 
     # ── File operations ───────────────────────────────────────────────────
     def _convert_file_op(self, tag, attrs, lines, imports, px):
@@ -917,6 +1036,8 @@ class FlowConverter:
         imports = {"org.springframework.web.bind.annotation.*",
                    "org.springframework.http.ResponseEntity",
                    "org.springframework.http.HttpStatus",
+                   "lombok.extern.slf4j.Slf4j",
+                   "lombok.RequiredArgsConstructor",
                    "java.util.*"}
         methods = []
         service_deps = set()
@@ -943,6 +1064,159 @@ class FlowConverter:
                     base_path = cfg.get("basePath", "")
 
         return self._format_controller_class(class_name, base_path, imports, service_deps, methods)
+
+    # ── APIkit Router → REST Controller ────────────────────────────────────
+    _APIKIT_NAME_PATTERN = re.compile(
+        r'^(get|post|put|patch|delete|head|options):'  # HTTP method
+        r'\\(.+?)'                                     # path
+        r'(?::application\\[a-z]+)?'                   # optional content-type
+        r':(.+)$'                                      # router config
+    )
+
+    @staticmethod
+    def _apikit_path_to_spring(raw_path: str) -> str:
+        """Convert APIkit path ``\\policies\\(policyId)`` → ``/policies/{policyId}``."""
+        path = raw_path.replace("\\", "/")
+        path = re.sub(r"\((\w+)\)", r"{\1}", path)
+        if not path.startswith("/"):
+            path = "/" + path
+        return path
+
+    def _generate_apikit_controller(self, apikit_flows, http_flows, parsed_data):
+        """Generate a proper REST controller from APIkit-routed flows.
+
+        Each APIkit flow name encodes its HTTP method and path:
+            ``get:\\policies\\(policyId):insurance-api-router``
+        This method parses those names and generates individual @GetMapping,
+        @PostMapping, etc. endpoints in a single controller class.
+        """
+        files = {}
+        imports = {
+            "org.springframework.web.bind.annotation.*",
+            "org.springframework.http.ResponseEntity",
+            "org.springframework.http.HttpStatus",
+            "lombok.extern.slf4j.Slf4j",
+            "lombok.RequiredArgsConstructor",
+            "java.util.*",
+        }
+        methods = []
+        service_deps = set()
+
+        # Find the base path from the main flow's HTTP listener (e.g. /api/v1)
+        base_path = ""
+        for flow in http_flows:
+            for proc in flow.get("processors", []):
+                if proc.get("type") in ("apikit:router", "apikit-router"):
+                    source = flow.get("source") or {}
+                    raw_bp = source.get("path", "")
+                    # Strip wildcard suffix like /api/v1/* → /api/v1
+                    base_path = re.sub(r"/?\*$", "", raw_bp)
+                    break
+            if base_path:
+                break
+
+        # Also try to extract base path from HTTP listener config
+        if not base_path:
+            for flow in http_flows:
+                source = flow.get("source") or {}
+                cfg_ref = source.get("config_ref", "")
+                for cfg in parsed_data.get("global_configs", []):
+                    if cfg.get("name") == cfg_ref and cfg.get("type") == "http-listener":
+                        bp = cfg.get("basePath", "")
+                        if bp:
+                            base_path = bp
+                            break
+                if base_path:
+                    break
+
+        # Determine controller class name from router config
+        router_config = ""
+        for flow in apikit_flows:
+            m = self._APIKIT_NAME_PATTERN.match(flow.get("name", ""))
+            if m:
+                router_config = m.group(3)
+                break
+        class_name = self._to_class_name(router_config or "api") + "Controller"
+        tag_name = self._to_class_name(router_config or "api")
+
+        for flow in apikit_flows:
+            m = self._APIKIT_NAME_PATTERN.match(flow.get("name", ""))
+            if not m:
+                continue
+            http_method = m.group(1).upper()    # GET, POST, PUT, etc.
+            raw_path = m.group(2)               # \policies\(policyId)
+            spring_path = self._apikit_path_to_spring(raw_path)
+
+            # Build annotation
+            annotation = self.connector_mapper.get_http_annotation(http_method)
+
+            # Extract path variables from spring_path
+            path_vars = re.findall(r"\{(\w+)\}", spring_path)
+
+            # Build method name from path + method
+            clean = re.sub(r"[^a-zA-Z0-9]", " ", raw_path).split()
+            method_name = http_method.lower() + "".join(w.capitalize() for w in clean)
+
+            # Build params: path vars + request body for POST/PUT/PATCH
+            params = []
+            for var in path_vars:
+                params.append(f'@PathVariable String {var}')
+            if http_method in ("POST", "PUT", "PATCH"):
+                params.append("@RequestBody Map<String, Object> requestBody")
+            params_str = ", ".join(params)
+
+            # Convert processors (the actual flow body)
+            body_lines, extra_imports, deps = self._convert_processors(
+                flow["processors"], parsed_data)
+            imports.update(extra_imports)
+            service_deps.update(deps)
+
+            # Build payload init
+            if http_method in ("POST", "PUT", "PATCH"):
+                payload_init = "        Object payload = requestBody;"
+            else:
+                payload_init = "        Object payload = null;"
+
+            # Build the method
+            body = "\n".join(body_lines)
+            escaped_name = flow["name"].replace("\\", "\\\\")
+            method_code = (
+                f'    @{annotation}("{spring_path}")\n'
+                f'    public ResponseEntity<?> {method_name}({params_str}) {{\n'
+                f'        log.info("Handling request: {escaped_name}");\n'
+                f'{payload_init}\n'
+                f'{body}\n'
+                f'        return ResponseEntity.ok(payload);\n'
+                f'    }}'
+            )
+            methods.append(method_code)
+
+        # Format the controller class
+        dep_fields = self._format_service_deps(service_deps)
+        imports.add("lombok.extern.slf4j.Slf4j")
+        imports.add("lombok.RequiredArgsConstructor")
+        import_lines = "\n".join(f"import {i};" for i in sorted(imports))
+        bp_anno = f'@RequestMapping("{base_path}")\n' if base_path else ""
+        tag_anno = f'@Tag(name = "{tag_name}", description = "{tag_name} operations")\n'
+
+        # Add Swagger annotations
+        imports.add("io.swagger.v3.oas.annotations.tags.Tag")
+        import_lines = "\n".join(f"import {i};" for i in sorted(imports))
+
+        controller_code = (
+            f"package com.example.controller;\n\n"
+            f"{import_lines}\n\n"
+            f"@Slf4j\n@RequiredArgsConstructor\n"
+            f"{tag_anno}"
+            f"@RestController\n{bp_anno}"
+            f"public class {class_name} {{\n\n"
+            f"{dep_fields}\n\n"
+            + "\n\n".join(methods) + "\n"
+            f"}}\n"
+        )
+
+        files[f"controller/{class_name}.java"] = controller_code
+        return files
 
     # ── Scheduler ─────────────────────────────────────────────────────────
     def _generate_scheduler(self, flows, parsed_data):
@@ -1175,6 +1449,8 @@ class FlowConverter:
             "org.springframework.batch.repeat.RepeatStatus",
             "org.springframework.context.annotation.Bean",
             "org.springframework.context.annotation.Configuration",
+            "lombok.extern.slf4j.Slf4j",
+            "lombok.RequiredArgsConstructor",
         }
         service_deps = set()
         step_beans = []
@@ -1245,7 +1521,8 @@ class FlowConverter:
 
     def _generate_service_class(self, class_name, sub_flows, parsed_data):
         imports = {"org.springframework.stereotype.Service",
-                   
+                   "lombok.extern.slf4j.Slf4j",
+                   "lombok.RequiredArgsConstructor",
                    "java.util.*"}
         methods = []
         service_deps = set()
@@ -1256,9 +1533,10 @@ class FlowConverter:
             service_deps.update(deps)
             methods.append(
                 f'    public Object {mn}() {{\n'
-                f'        log.info("Executing: {sf["name"]}");\n'
+                f'        log.info("Executing: {sf["name"].replace(chr(92), chr(92)*2)}");\n'
+                f'        Object payload = null;\n'
                 + "\n".join(body_lines) + "\n"
-                f'        return null;\n'
+                f'        return payload;\n'
                 f'    }}'
             )
         dep_fields = self._format_service_deps(service_deps)
@@ -1275,23 +1553,44 @@ class FlowConverter:
 
     def _generate_service_from_flow(self, class_name, flow, parsed_data):
         imports = {"org.springframework.stereotype.Service",
-                   
+                   "lombok.extern.slf4j.Slf4j",
+                   "lombok.RequiredArgsConstructor",
                    "java.util.*"}
         mn = self._to_method_name(flow["name"])
         body_lines, ei, deps = self._convert_processors(flow["processors"], parsed_data)
         imports.update(ei)
         dep_fields = self._format_service_deps(deps)
         import_lines = "\n".join(f"import {i};" for i in sorted(imports))
+
+        # Build method params from flow source (path vars, request body)
+        source = flow.get("source") or {}
+        path = source.get("path", "")
+        method = source.get("method", "GET").upper()
+        path_vars = re.findall(r"\{(\w+)\}", path)
+        param_parts = []
+        for var in path_vars:
+            param_parts.append(f"String {var}")
+        if method in ("POST", "PUT", "PATCH"):
+            param_parts.append("Map<String, Object> requestBody")
+        params_str = ", ".join(param_parts)
+
+        # Determine payload initialization
+        if method in ("POST", "PUT", "PATCH"):
+            payload_init = '        Object payload = requestBody;'
+        else:
+            payload_init = '        Object payload = null;'
+
         return (
             f"package com.example.service;\n\n"
             f"{import_lines}\n\n"
             f"@Slf4j\n@Service\n@RequiredArgsConstructor\n"
             f"public class {class_name} {{\n\n"
             f"{dep_fields}\n\n"
-            f'    public Object {mn}() {{\n'
-            f'        log.info("Executing flow: {flow["name"]}");\n'
+            f'    public Object {mn}({params_str}) {{\n'
+            f'        log.info("Executing flow: {flow["name"].replace(chr(92), chr(92)*2)}");\n'
+            f'{payload_init}\n'
             + "\n".join(body_lines) + "\n"
-            f'        return null;\n'
+            f'        return payload;\n'
             f'    }}\n'
             f"}}\n"
         )
@@ -1360,10 +1659,17 @@ class FlowConverter:
 
     def _format_method(self, annotation, path, method_name, params, body_lines, flow):
         body = "\n".join(body_lines)
+        # Determine initial payload based on HTTP method
+        source_method = flow.get("source", {}).get("method", "GET").upper()
+        if source_method in ("POST", "PUT", "PATCH"):
+            payload_init = "        Object payload = requestBody;"
+        else:
+            payload_init = "        Object payload = null;"
         return (
             f'    @{annotation}("{path}")\n'
             f'    public ResponseEntity<?> {method_name}({params}) {{\n'
-            f'        log.info("Handling request: {flow["name"]}");\n'
+            f'        log.info("Handling request: {flow["name"].replace(chr(92), chr(92)*2)}");\n'
+            f'{payload_init}\n'
             f'{body}\n'
             f'        return ResponseEntity.ok(payload);\n'
             f'    }}'
@@ -1371,33 +1677,32 @@ class FlowConverter:
 
     def _format_controller_class(self, class_name, base_path, imports, service_deps, methods):
         dep_fields = self._format_service_deps(service_deps)
-        constructor = self._generate_constructor(class_name, service_deps)
+        # Ensure Lombok imports are present for @Slf4j and @RequiredArgsConstructor
+        imports.add("lombok.extern.slf4j.Slf4j")
+        imports.add("lombok.RequiredArgsConstructor")
         import_lines = "\n".join(f"import {i};" for i in sorted(imports))
         bp = f'@RequestMapping("{base_path}")\n' if base_path else ""
         return (
             f"package com.example.controller;\n\n"
             f"{import_lines}\n\n"
-            f"@RestController\n{bp}"
+            f"@Slf4j\n@RequiredArgsConstructor\n@RestController\n{bp}"
             f"public class {class_name} {{\n\n"
-            f"    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger({class_name}.class);\n\n"
             f"{dep_fields}\n\n"
-            f"{constructor}\n"
             + "\n\n".join(methods) + "\n"
             f"}}\n"
         )
 
     def _format_component_class(self, class_name, package, imports, service_deps, methods):
         dep_fields = self._format_service_deps(service_deps)
-        constructor = self._generate_constructor(class_name, service_deps)
+        imports.add("lombok.extern.slf4j.Slf4j")
+        imports.add("lombok.RequiredArgsConstructor")
         import_lines = "\n".join(f"import {i};" for i in sorted(imports))
         return (
             f"package {package};\n\n"
             f"{import_lines}\n\n"
-            f"@Component\n"
+            f"@Slf4j\n@RequiredArgsConstructor\n@Component\n"
             f"public class {class_name} {{\n\n"
-            f"    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger({class_name}.class);\n\n"
             f"{dep_fields}\n\n"
-            f"{constructor}\n"
             + "\n\n".join(methods) + "\n"
             f"}}\n"
         )
@@ -1460,7 +1765,13 @@ class FlowConverter:
         return proc.get("attributes", {}).get("sql", "SELECT 1")
 
     def _convert_sql_params(self, sql):
-        return re.sub(r":(\w+)", "?", sql)
+        sql = re.sub(r":(\w+)", "?", sql)
+        # Normalize MySQL-specific functions to ANSI SQL equivalents
+        sql = re.sub(r'\bCURDATE\(\)', 'CURRENT_DATE', sql, flags=re.IGNORECASE)
+        sql = re.sub(r'\bNOW\(\)', 'CURRENT_TIMESTAMP', sql, flags=re.IGNORECASE)
+        sql = re.sub(r'\bIFNULL\(', 'COALESCE(', sql, flags=re.IGNORECASE)
+        sql = re.sub(r'\bLIMIT\s+(\d+)\s*,\s*(\d+)', r'LIMIT \2 OFFSET \1', sql, flags=re.IGNORECASE)
+        return sql
 
     def _extract_db_params(self, proc):
         params = []
@@ -1526,4 +1837,17 @@ class FlowConverter:
     def _to_variable_name(self, class_name):
         if not class_name:
             return "service"
-        return class_name[0].lower() + class_name[1:]
+        # Convert hyphens, dots, underscores to camelCase
+        # e.g. "claims-db-config" → "claimsDbConfig"
+        #      "my_service.name"  → "myServiceName"
+        import re as _re
+        parts = _re.split(r'[-._]+', class_name)
+        if not parts:
+            return "service"
+        result = parts[0][0].lower() + parts[0][1:] if parts[0] else ""
+        for p in parts[1:]:
+            if p:
+                result += p[0].upper() + p[1:]
+        # Strip any remaining non-Java-identifier characters
+        result = _re.sub(r'[^a-zA-Z0-9]', '', result)
+        return result or "service"

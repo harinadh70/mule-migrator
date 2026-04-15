@@ -55,6 +55,7 @@ export default function MigrationPage() {
   const [includeSwagger, setIncludeSwagger] = useState(true);
   const [includeDocs, setIncludeDocs] = useState(true);
   const [aiEnhancement, setAiEnhancement] = useState(true);
+  const [aiProvider, setAiProvider] = useState<"github_copilot" | "azure_openai">("github_copilot");
   const [uploadedFiles, setUploadedFiles] = useState<Array<{name: string; content: string; size: number}>>([]);
   const [inputMode, setInputMode] = useState<"editor" | "upload">("upload");
 
@@ -184,8 +185,8 @@ export default function MigrationPage() {
           includeTests,
           includeSwagger,
           includeDocs,
-          llmProvider: aiEnhancement ? "azure_openai" : "",
-          llmModel: aiEnhancement ? "gpt-4.1" : "",
+          llmProvider: aiEnhancement ? aiProvider : "",
+          llmModel: aiEnhancement ? (aiProvider === "github_copilot" ? "gpt-4.1" : "gpt-4.1") : "",
           llmEnabled: aiEnhancement,
         },
       });
@@ -553,7 +554,7 @@ export default function MigrationPage() {
                         AI Enhancement
                       </span>
                       <p className="text-xs text-capText-light dark:text-gray-500 mt-0.5">
-                        Uses Azure OpenAI GPT-4.1 to improve generated code
+                        Uses AI to review and improve generated code
                       </p>
                     </div>
                     <div className="relative">
@@ -569,6 +570,46 @@ export default function MigrationPage() {
                         peer-checked:translate-x-5" />
                     </div>
                   </label>
+
+                  {/* AI Provider Selection */}
+                  {aiEnhancement && (
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAiProvider("github_copilot")}
+                        className={`flex-1 flex items-center justify-center gap-2 rounded-lg border-2 px-3 py-2.5 text-xs font-medium transition-all ${
+                          aiProvider === "github_copilot"
+                            ? "border-[#0070AD] bg-[#0070AD]/10 text-[#0070AD] dark:border-[#12ABDB] dark:bg-[#12ABDB]/10 dark:text-[#12ABDB]"
+                            : "border-gray-200 text-gray-500 hover:border-gray-300 dark:border-white/[0.1] dark:text-gray-400 dark:hover:border-white/[0.2]"
+                        }`}
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                        </svg>
+                        GitHub Copilot
+                        {aiProvider === "github_copilot" && (
+                          <span className="rounded bg-[#0070AD]/20 px-1.5 py-0.5 text-[9px] font-bold dark:bg-[#12ABDB]/20">GPT-4.1</span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAiProvider("azure_openai")}
+                        className={`flex-1 flex items-center justify-center gap-2 rounded-lg border-2 px-3 py-2.5 text-xs font-medium transition-all ${
+                          aiProvider === "azure_openai"
+                            ? "border-[#0070AD] bg-[#0070AD]/10 text-[#0070AD] dark:border-[#12ABDB] dark:bg-[#12ABDB]/10 dark:text-[#12ABDB]"
+                            : "border-gray-200 text-gray-500 hover:border-gray-300 dark:border-white/[0.1] dark:text-gray-400 dark:hover:border-white/[0.2]"
+                        }`}
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M5.483 3.803l6.296 11.942-6.296 5.398L0 3.803h5.483zm2.33 0H24L7.813 21.143l-2.33-5.398 8.626-11.942h-6.296z"/>
+                        </svg>
+                        Azure OpenAI
+                        {aiProvider === "azure_openai" && (
+                          <span className="rounded bg-[#0070AD]/20 px-1.5 py-0.5 text-[9px] font-bold dark:bg-[#12ABDB]/20">GPT-4.1</span>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Start Migration button */}
@@ -612,11 +653,18 @@ export default function MigrationPage() {
                   <h4 className="text-xs font-medium text-capText-light dark:text-gray-400 uppercase tracking-wider">
                     Generated Files
                   </h4>
-                  {files && (
-                    <span className="text-[10px] font-mono text-gray-400 dark:text-gray-500 tabular-nums">
-                      {files.length} files
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {files && files.filter(f => f.path.includes("src/test/") || f.path.includes("Test.java") || f.path.includes("Tests.java")).length > 0 && (
+                      <span className="flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                        {files.filter(f => f.path.includes("src/test/") || f.path.includes("Test.java") || f.path.includes("Tests.java")).length} test cases
+                      </span>
+                    )}
+                    {files && (
+                      <span className="text-[10px] font-mono text-gray-400 dark:text-gray-500 tabular-nums">
+                        {files.length} files
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="overflow-y-auto" style={{ maxHeight: "calc(100% - 44px)" }}>
                   <FileTree

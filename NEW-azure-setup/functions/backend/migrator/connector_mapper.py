@@ -108,6 +108,28 @@ CONNECTOR_DEPENDENCY_MAP = {
         {"groupId": "org.springframework.boot", "artifactId": "spring-boot-starter-security"},
         {"groupId": "org.springframework.boot", "artifactId": "spring-boot-starter-oauth2-client"},
     ],
+    # ── Azure Blob Storage ──────────────────────────────────────────────────
+    "azure-blob": [
+        {"groupId": "com.azure", "artifactId": "azure-storage-blob"},
+        {"groupId": "com.azure", "artifactId": "azure-identity"},
+    ],
+    # ── Azure File Share ──────────────────────────────────────────────────
+    "azure-file": [
+        {"groupId": "com.azure", "artifactId": "azure-storage-file-share"},
+        {"groupId": "com.azure", "artifactId": "azure-identity"},
+    ],
+    # ── Azure Service Bus ─────────────────────────────────────────────────
+    "azure-service-bus": [
+        {"groupId": "com.azure.spring", "artifactId": "spring-cloud-azure-starter-servicebus"},
+    ],
+    # ── Azure Cosmos DB ───────────────────────────────────────────────────
+    "azure-cosmos": [
+        {"groupId": "com.azure.spring", "artifactId": "spring-cloud-azure-starter-data-cosmos"},
+    ],
+    # ── Azure Key Vault ───────────────────────────────────────────────────
+    "azure-keyvault": [
+        {"groupId": "com.azure.spring", "artifactId": "spring-cloud-azure-starter-keyvault"},
+    ],
     # ── APIkit → handled by Spring Web ────────────────────────────────────
     "apikit": [],
     # ── EE core (DataWeave transforms) ────────────────────────────────────
@@ -321,7 +343,7 @@ class ConnectorMapper:
             {"groupId": "org.springframework.boot",
              "artifactId": "spring-boot-starter-test", "scope": "test"},
             {"groupId": "org.projectlombok",
-             "artifactId": "lombok", "scope": "provided"},
+             "artifactId": "lombok"},  # Handled by spring_generator with <optional>true</optional>
         ]
         for dep in common:
             key = f"{dep['groupId']}:{dep['artifactId']}"
@@ -384,13 +406,22 @@ class ConnectorMapper:
         elif connector_type == "http-request":
             name = self._to_property_name(config.get("name", ""))
             host = config.get("host", "localhost")
-            port = config.get("port", "80")
             proto = config.get("protocol", "HTTP").lower()
+            default_port = "443" if proto == "https" else "80"
+            port = config.get("port", default_port)
             base = config.get("basePath", "/")
-            props[f"external.api.{name}.url"] = f"{proto}://{host}:{port}{base}"
+            # Don't include port in URL if it's the default for the protocol
+            if (proto == "https" and str(port) == "443") or (proto == "http" and str(port) == "80"):
+                props[f"external.api.{name}.url"] = f"{proto}://{host}{base}"
+            else:
+                props[f"external.api.{name}.url"] = f"{proto}://{host}:{port}{base}"
             if config.get("authentication"):
                 auth = config["authentication"]
                 props[f"external.api.{name}.auth.type"] = auth.get("type", "")
+                if auth.get("username"):
+                    props[f"external.api.{name}.auth.username"] = auth["username"]
+                if auth.get("clientId"):
+                    props[f"external.api.{name}.auth.client-id"] = auth["clientId"]
 
         elif connector_type == "database":
             if config.get("url"):
@@ -473,6 +504,26 @@ class ConnectorMapper:
             props["salesforce.client-secret"] = ""
             props["salesforce.username"] = ""
             props["salesforce.password"] = ""
+
+        elif connector_type in ("azure-blob", "azure-file"):
+            props["azure.storage.account-name"] = config.get("accountName", "${AZURE_STORAGE_ACCOUNT}")
+            props["azure.storage.account-key"] = "${AZURE_STORAGE_KEY}"
+            if config.get("containerName"):
+                props["azure.storage.container"] = config["containerName"]
+            if config.get("shareName"):
+                props["azure.storage.share-name"] = config["shareName"]
+
+        elif connector_type == "azure-service-bus":
+            props["spring.cloud.azure.servicebus.connection-string"] = "${AZURE_SERVICEBUS_CONNECTION_STRING}"
+            props["spring.cloud.azure.servicebus.namespace"] = config.get("namespace", "")
+
+        elif connector_type == "azure-cosmos":
+            props["spring.cloud.azure.cosmos.endpoint"] = config.get("endpoint", "${AZURE_COSMOS_ENDPOINT}")
+            props["spring.cloud.azure.cosmos.key"] = "${AZURE_COSMOS_KEY}"
+            props["spring.cloud.azure.cosmos.database"] = config.get("database", "")
+
+        elif connector_type == "azure-keyvault":
+            props["spring.cloud.azure.keyvault.secret.property-sources[0].endpoint"] = config.get("vaultUrl", "${AZURE_KEYVAULT_URL}")
 
         return props
 

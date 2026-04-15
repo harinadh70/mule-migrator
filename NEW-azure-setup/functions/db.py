@@ -61,23 +61,26 @@ async def _resolve_connection_string() -> str:
     return conn_str
 
 
-def _parse_dsn(raw: str) -> str:
+def _parse_dsn(raw: str) -> dict:
     """
-    Normalise the connection string into a DSN that asyncpg accepts.
+    Normalise the connection string into kwargs that asyncpg accepts.
 
     Supports both keyword=value format and postgresql:// URIs.
+    Returns a dict of connection kwargs to avoid URL-encoding issues
+    with special characters in passwords.
     """
     if raw.startswith("postgresql://") or raw.startswith("postgres://"):
-        return raw
-    # keyword=value -> DSN
+        return {"dsn": raw}
+    # keyword=value -> separate params (avoids URL-encoding password issues)
     parts = dict(token.split("=", 1) for token in raw.split() if "=" in token)
-    host = parts.get("host", "localhost")
-    port = parts.get("port", "5432")
-    dbname = parts.get("dbname", "migrator")
-    user = parts.get("user", "migrator")
-    password = parts.get("password", "")
-    sslmode = parts.get("sslmode", "require")
-    return f"postgresql://{user}:{password}@{host}:{port}/{dbname}?sslmode={sslmode}"
+    return {
+        "host": parts.get("host", "localhost"),
+        "port": int(parts.get("port", "5432")),
+        "database": parts.get("dbname", "migrator"),
+        "user": parts.get("user", "migrator"),
+        "password": parts.get("password", ""),
+        "ssl": parts.get("sslmode", "require") in ("require", "verify-ca", "verify-full"),
+    }
 
 
 async def get_pool() -> asyncpg.Pool:
@@ -85,14 +88,14 @@ async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None or _pool._closed:
         raw = await _resolve_connection_string()
-        dsn = _parse_dsn(raw)
-        _pool = await asyncpg.create_pool(
-            dsn,
-            min_size=2,
-            max_size=10,
-            command_timeout=60,
-            server_settings={"application_name": "mulesoft-migrator-functions"},
-        )
+        conn_kwargs = _parse_dsn(raw)
+        conn_kwargs.update({
+            "min_size": 2,
+            "max_size": 10,
+            "command_timeout": 60,
+            "server_settings": {"application_name": "mulesoft-migrator-functions"},
+        })
+        _pool = await asyncpg.create_pool(**conn_kwargs)
         logger.info("db.pool_created")
         await _ensure_tables()
     return _pool
@@ -175,6 +178,33 @@ CREATE INDEX IF NOT EXISTS idx_migrations_user ON migrations(user_id);
 CREATE INDEX IF NOT EXISTS idx_migrations_deleted ON migrations(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_builds_migration ON builds(migration_id);
 CREATE INDEX IF NOT EXISTS idx_users_oid ON users(azure_ad_oid);
+
+CREATE TABLE IF NOT EXISTS validations (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    migration_id    UUID NOT NULL REFERENCES migrations(id),
+    user_id         UUID REFERENCES users(id),
+    status          TEXT NOT NULL DEFAULT 'pending',
+    mode            TEXT NOT NULL DEFAULT 'auto',
+    java_version    TEXT NOT NULL DEFAULT '17',
+    keep_alive_min  INTEGER NOT NULL DEFAULT 15,
+    aci_name        TEXT,
+    aci_fqdn        TEXT,
+    app_url         TEXT,
+    acr_image_tag   TEXT,
+    mulesoft_base_url TEXT,
+    test_endpoints  JSONB DEFAULT '[]',
+    comparison_mode TEXT DEFAULT 'server',
+    test_results    JSONB DEFAULT '[]',
+    user_verdict    TEXT,
+    error           TEXT,
+    deployed_at     TIMESTAMPTZ,
+    expires_at      TIMESTAMPTZ,
+    torn_down_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_validations_migration ON validations(migration_id);
+CREATE INDEX IF NOT EXISTS idx_validations_status ON validations(status);
 """
 
 
@@ -185,7 +215,14 @@ async def _ensure_tables() -> None:
         return
     try:
         async with pool.acquire() as conn:
-            await conn.execute(_DDL)
+            # Run each statement separately so one failure doesn't block others
+            for stmt in _DDL.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    try:
+                        await conn.execute(stmt)
+                    except Exception as stmt_exc:
+                        logger.debug("db.stmt_skipped: %s", stmt_exc)
         logger.info("db.tables_ensured")
     except Exception as exc:
         logger.warning("db.ensure_tables_failed: %s", exc)
@@ -198,6 +235,7 @@ async def _ensure_tables() -> None:
 _JSONB_FIELDS = {
     "input_xml_files", "dataweave_scripts", "llm_config",
     "output_files", "agent_trace", "summary", "metadata",
+    "test_endpoints", "test_results",
 }
 
 
@@ -331,7 +369,10 @@ async def list_migrations(
         )
         rows = await conn.fetch(
             f"""
-            SELECT * FROM migrations
+            SELECT id, user_id, project_name, group_id, java_version,
+                   status, total_tokens_used, total_cost_usd, duration_ms,
+                   started_at, completed_at, created_at, updated_at
+            FROM migrations
             WHERE {where_sql}
             ORDER BY created_at DESC
             OFFSET ${idx} LIMIT ${idx + 1}
@@ -491,3 +532,85 @@ async def update_build(build_id: str, updates: dict[str, Any]) -> Optional[dict[
             *params,
         )
     return _row_to_dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+#  Validations CRUD
+# ---------------------------------------------------------------------------
+
+async def create_validation(data: dict[str, Any], user_id: Optional[str] = None) -> dict[str, Any]:
+    """Insert a new validation job and return its row."""
+    pool = await get_pool()
+    validation_id = str(uuid.uuid4())
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO validations
+                (id, migration_id, user_id, status, mode, java_version,
+                 keep_alive_min, mulesoft_base_url, test_endpoints, comparison_mode)
+            VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8::jsonb, $9)
+            RETURNING *
+            """,
+            uuid.UUID(validation_id),
+            uuid.UUID(data["migration_id"]),
+            uuid.UUID(user_id) if user_id else None,
+            data.get("mode", "auto"),
+            data.get("java_version", "17"),
+            data.get("keep_alive_min", 15),
+            data.get("mulesoft_base_url", ""),
+            json.dumps(data.get("test_endpoints", [])),
+            data.get("comparison_mode", "server"),
+        )
+    return _row_to_dict(row)
+
+
+async def get_validation(validation_id: str) -> Optional[dict[str, Any]]:
+    """Fetch a single validation by ID."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM validations WHERE id = $1",
+            uuid.UUID(validation_id),
+        )
+    return _row_to_dict(row) if row else None
+
+
+async def update_validation(validation_id: str, updates: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Update specific columns on a validation row."""
+    pool = await get_pool()
+    if not updates:
+        return await get_validation(validation_id)
+
+    set_parts: list[str] = []
+    params: list[Any] = []
+    idx = 1
+
+    for col, val in updates.items():
+        if col in ("test_endpoints", "test_results"):
+            set_parts.append(f"{col} = ${idx}::jsonb")
+            params.append(json.dumps(val) if not isinstance(val, str) else val)
+        else:
+            set_parts.append(f"{col} = ${idx}")
+            params.append(val)
+        idx += 1
+
+    params.append(uuid.UUID(validation_id))
+    set_sql = ", ".join(set_parts)
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"UPDATE validations SET {set_sql} WHERE id = ${idx} RETURNING *",
+            *params,
+        )
+    return _row_to_dict(row) if row else None
+
+
+async def list_validations_for_migration(migration_id: str) -> list[dict[str, Any]]:
+    """Return all validations for a given migration, newest first."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM validations WHERE migration_id = $1 ORDER BY created_at DESC",
+            uuid.UUID(migration_id),
+        )
+    return [_row_to_dict(r) for r in rows]

@@ -7,7 +7,7 @@ import {
   Shield,
   Check,
   Cloud,
-  Zap,
+  // Zap,
 } from "lucide-react";
 import { useSettingsStore, type Theme } from "@/store/settings";
 import { showToast } from "@/components/layout/Layout";
@@ -23,7 +23,13 @@ export default function SettingsPage() {
   }
 
   function handleReset() {
-    settings.resetDefaults();
+    // Reset to defaults by setting each value individually
+    settings.setTheme("system");
+    settings.setDefaultJavaVersion("21");
+    settings.setDefaultSpringBootVersion("3.3");
+    settings.setDefaultBuildTool("maven");
+    settings.setDefaultGroupId("com.example");
+    settings.setDefaultBasePackage("com.example.app");
     showToast({ type: "info", title: "Settings reset to defaults" });
   }
 
@@ -125,7 +131,7 @@ export default function SettingsPage() {
             <label className="block text-xs font-medium text-capText-light dark:text-gray-400 mb-1">Java Version</label>
             <select
               value={settings.defaultJavaVersion}
-              onChange={(e) => settings.setDefaultJavaVersion(e.target.value)}
+              onChange={(e) => settings.setDefaultJavaVersion(e.target.value as "17" | "21")}
               className="input"
             >
               <option value="17">Java 17</option>
@@ -137,7 +143,7 @@ export default function SettingsPage() {
             <label className="block text-xs font-medium text-capText-light dark:text-gray-400 mb-1">Spring Boot Version</label>
             <select
               value={settings.defaultSpringBootVersion}
-              onChange={(e) => settings.setDefaultSpringBootVersion(e.target.value)}
+              onChange={(e) => settings.setDefaultSpringBootVersion(e.target.value as "3.2" | "3.3")}
               className="input"
             >
               <option value="3.2">3.2.x (Latest)</option>

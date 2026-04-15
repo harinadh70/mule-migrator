@@ -79,7 +79,7 @@ resource "azurerm_redis_cache" "main" {
   family                        = var.redis_family
   sku_name                      = var.redis_sku
   minimum_tls_version           = "1.2"
-  public_network_access_enabled = false
+  public_network_access_enabled = true   # Consumption plan can't VNet-integrate; secured via SSL + access key
   redis_version                 = "6"
 
   redis_configuration {

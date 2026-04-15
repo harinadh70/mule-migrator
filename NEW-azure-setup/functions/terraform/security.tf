@@ -83,30 +83,13 @@ resource "azuread_service_principal" "migrator" {
 }
 
 # ── Function App auth settings (EasyAuth with Azure AD) ────────────────────
-
-resource "azurerm_linux_function_app" "auth_settings" {
-  # This is handled via the existing azurerm_linux_function_app resource
-  # We configure auth via app settings and the Azure Portal/CLI
-  # The x-ms-client-principal header is automatically injected by
-  # App Service authentication
-
-  # Note: For production, enable EasyAuth via:
-  # az webapp auth microsoft update \
-  #   --name <func-app-name> \
-  #   --resource-group <rg-name> \
-  #   --client-id <client-id> \
-  #   --issuer "https://login.microsoftonline.com/<tenant-id>/v2.0" \
-  #   --allowed-audiences "api://<client-id>"
-
-  count = 0  # Placeholder — auth is configured post-deployment via CLI
-  name                = "placeholder"
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
-  service_plan_id     = azurerm_service_plan.func.id
-  storage_account_name       = azurerm_storage_account.func.name
-  storage_account_access_key = azurerm_storage_account.func.primary_access_key
-  site_config {}
-}
+# Auth is configured post-deployment via CLI:
+#   az webapp auth microsoft update \
+#     --name <func-app-name> \
+#     --resource-group <rg-name> \
+#     --client-id <client-id> \
+#     --issuer "https://login.microsoftonline.com/<tenant-id>/v2.0" \
+#     --allowed-audiences "api://<client-id>"
 
 # ── Role assignments for Function App managed identity ─────────────────────
 

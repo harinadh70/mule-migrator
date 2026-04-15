@@ -29,19 +29,26 @@ export async function getCollectionStats(): Promise<IndexStats> {
     const data = response.data;
     const collections = Array.isArray(data) ? data : data?.collections || [];
     const totalDocs = collections.reduce((sum: number, c: any) => sum + (c.documentCount || c.document_count || 0), 0);
+    const totalChunks = totalDocs * 10;
+    // Estimate: each chunk ≈ 12KB embedding (3072 dims × 4 bytes) + ~2KB text = ~14KB
+    const estimatedIndexBytes = totalChunks * 14336;
     return {
       totalDocuments: totalDocs,
-      totalChunks: totalDocs * 10,
-      totalEmbeddings: totalDocs * 10,
-      indexSizeBytes: 0,
-      embeddingModel: "all-MiniLM-L6-v2",
-      collections: collections.map((c: any) => ({
-        name: c.name || c,
-        documentCount: c.documentCount || c.document_count || 0,
-        chunkCount: (c.documentCount || 0) * 10,
-        sizeBytes: 0,
-        lastUpdated: c.updatedAt || c.updated_at || new Date().toISOString(),
-      })),
+      totalChunks,
+      totalEmbeddings: totalChunks,
+      indexSizeBytes: estimatedIndexBytes,
+      embeddingModel: "text-embedding-3-large",
+      collections: collections.map((c: any) => {
+        const docCount = c.documentCount || c.document_count || 0;
+        const chunks = docCount * 10;
+        return {
+          name: c.name || c,
+          documentCount: docCount,
+          chunkCount: chunks,
+          sizeBytes: chunks * 14336,
+          lastUpdated: c.lastUpdated || c.updatedAt || c.updated_at || new Date().toISOString(),
+        };
+      }),
     };
   } catch {
     return {

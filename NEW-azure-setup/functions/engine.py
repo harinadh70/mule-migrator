@@ -365,10 +365,29 @@ def _generate_application_yml_from_mule_config(
             host = datasource.pop("_host", "localhost")
             port = datasource.pop("_db_port", "3306")
             db_name = datasource.pop("_database", "mydb")
-            datasource["url"] = f"jdbc:mysql://{host}:{port}/{db_name}?useSSL=true&serverTimezone=UTC"
-            if not datasource.get("driver-class-name"):
-                datasource["driver-class-name"] = "com.mysql.cj.jdbc.Driver"
+            driver = datasource.get("driver-class-name", "").lower()
+            # Detect DB type from driver class name
+            if "postgres" in driver:
+                port = port or "5432"
+                datasource["url"] = f"jdbc:postgresql://{host}:{port}/{db_name}?sslmode=require"
+                datasource.setdefault("driver-class-name", "org.postgresql.Driver")
+            elif "sqlserver" in driver or "mssql" in driver:
+                port = port or "1433"
+                datasource["url"] = f"jdbc:sqlserver://{host}:{port};databaseName={db_name};encrypt=true"
+                datasource.setdefault("driver-class-name", "com.microsoft.sqlserver.jdbc.SQLServerDriver")
+            else:
+                datasource["url"] = f"jdbc:mysql://{host}:{port}/{db_name}?useSSL=true&serverTimezone=UTC"
+                datasource.setdefault("driver-class-name", "com.mysql.cj.jdbc.Driver")
         else:
+            # Even when URL is provided, detect driver from URL if missing
+            url_str = datasource.get("url", "").lower()
+            if not datasource.get("driver-class-name") and url_str:
+                if "postgresql" in url_str:
+                    datasource["driver-class-name"] = "org.postgresql.Driver"
+                elif "sqlserver" in url_str:
+                    datasource["driver-class-name"] = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+                elif "mysql" in url_str:
+                    datasource["driver-class-name"] = "com.mysql.cj.jdbc.Driver"
             datasource.pop("_host", None)
             datasource.pop("_db_port", None)
             datasource.pop("_database", None)

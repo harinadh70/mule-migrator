@@ -4,6 +4,7 @@ import {
   getMigration,
   listMigrations,
   cancelMigration,
+  retryMigration,
   deleteMigration,
   getMigrationFiles,
   getMigrationStats,
@@ -87,6 +88,19 @@ export function useCancelMigration() {
     onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["migration", id] });
       queryClient.invalidateQueries({ queryKey: ["migrations"] });
+    },
+  });
+}
+
+export function useRetryMigration() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => retryMigration(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ["migration", id] });
+      queryClient.invalidateQueries({ queryKey: ["migrations"] });
+      queryClient.invalidateQueries({ queryKey: ["migrationStats"] });
     },
   });
 }

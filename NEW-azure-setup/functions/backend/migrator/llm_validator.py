@@ -28,6 +28,19 @@ from abc import ABC, abstractmethod
 #  Provider Registry
 # ══════════════════════════════════════════════════════════════════════════════
 LLM_PROVIDERS = {
+    "github_copilot": {
+        "name": "GitHub Copilot",
+        "models": [
+            {"id": "gpt-4.1", "name": "GPT-4.1 (Latest)", "tier": "premium"},
+            {"id": "gpt-4o", "name": "GPT-4o", "tier": "premium"},
+            {"id": "gpt-4o-mini", "name": "GPT-4o Mini (Fast)", "tier": "standard"},
+            {"id": "o3-mini", "name": "o3-mini (Reasoning)", "tier": "premium"},
+            {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "tier": "premium"},
+        ],
+        "env_key": "GITHUB_TOKEN",
+        "docs_url": "https://github.com/settings/tokens",
+        "base_url": "https://models.inference.ai.azure.com",
+    },
     "anthropic": {
         "name": "Anthropic Claude",
         "models": [
@@ -247,6 +260,60 @@ class AnthropicProvider(BaseLLMProvider):
             messages=[{"role": "user", "content": user_prompt}],
         )
         return response.content[0].text
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  GitHub Copilot Provider (via GitHub Models API — OpenAI compatible)
+# ══════════════════════════════════════════════════════════════════════════════
+class GitHubCopilotProvider(BaseLLMProvider):
+    """Uses GitHub Models API (models.inference.ai.azure.com) with a GitHub PAT."""
+
+    def validate(self, files: dict, summary: dict) -> dict:
+        try:
+            import openai
+        except ImportError:
+            return _import_error("openai", "pip install openai")
+
+        api_key = self.api_key or os.environ.get("GITHUB_TOKEN", "")
+        if not api_key:
+            return _missing_key_error("GITHUB_TOKEN")
+
+        client = openai.OpenAI(
+            base_url=self.base_url or "https://models.inference.ai.azure.com",
+            api_key=api_key,
+        )
+        user_prompt = _build_validation_prompt(files, summary)
+
+        try:
+            response = client.chat.completions.create(
+                model=self.model or "gpt-4.1",
+                max_tokens=4096,
+                messages=[
+                    {"role": "system", "content": VALIDATION_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            return self._parse_response(response.choices[0].message.content)
+        except Exception as e:
+            return _api_error("GitHub Copilot", str(e))
+
+    def chat(self, system_prompt: str, user_prompt: str,
+             max_tokens: int = 2048) -> str:
+        import openai
+        api_key = self.api_key or os.environ.get("GITHUB_TOKEN", "")
+        client = openai.OpenAI(
+            base_url=self.base_url or "https://models.inference.ai.azure.com",
+            api_key=api_key,
+        )
+        response = client.chat.completions.create(
+            model=self.model or "gpt-4.1",
+            max_tokens=max_tokens,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        return response.choices[0].message.content
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -524,6 +591,7 @@ class OllamaProvider(BaseLLMProvider):
 #  Provider Factory
 # ══════════════════════════════════════════════════════════════════════════════
 PROVIDER_CLASSES = {
+    "github_copilot": GitHubCopilotProvider,
     "anthropic": AnthropicProvider,
     "openai": OpenAIProvider,
     "google": GoogleProvider,

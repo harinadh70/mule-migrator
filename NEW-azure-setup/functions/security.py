@@ -138,16 +138,135 @@ def validate_azure_ad_principal(
     )
 
 
+def _validate_bearer_token(headers: dict[str, str]) -> Optional[AuthUser]:
+    """
+    Validate a Bearer token from the Authorization header.
+
+    Supports:
+      1. Azure AD JWTs (3-part tokens from MSAL acquireTokenSilent)
+      2. Custom 2-part HMAC tokens (email/password login)
+      3. Legacy "msal" literal (backwards-compat)
+    """
+    import hmac as _hmac
+
+    auth_header = headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+
+    # Legacy "Bearer msal" fallback (old frontend)
+    if auth_header == "Bearer msal":
+        admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
+        return AuthUser(
+            oid="msal-user",
+            email=admin_email or "msal@user",
+            name=admin_email.split("@")[0] if admin_email else "MSAL User",
+            roles=["admin"],
+        )
+
+    token = auth_header[7:]
+    jwt_parts = token.split(".")
+
+    # ── Azure AD JWT (3-part: header.payload.signature) ──────────
+    if len(jwt_parts) == 3:
+        try:
+            payload_b64 = jwt_parts[1]
+            padded = payload_b64 + "=" * (4 - len(payload_b64) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded))
+
+            # Verify not expired
+            if payload.get("exp", 0) < time.time():
+                logger.warning("azure_ad_jwt.expired")
+                return None
+
+            # Verify audience matches our app registration
+            aud = payload.get("aud", "")
+            expected_client_id = os.environ.get(
+                "AZURE_AD_CLIENT_ID", "562164fe-698a-4b4a-b874-40025140f008"
+            )
+            if aud != expected_client_id and aud != f"api://{expected_client_id}":
+                logger.warning(
+                    "azure_ad_jwt.audience_mismatch: got=%s expected=%s",
+                    aud, expected_client_id,
+                )
+                return None
+
+            email = (
+                payload.get("preferred_username")
+                or payload.get("email")
+                or payload.get("upn", "")
+            )
+            name = payload.get("name", "")
+            oid = payload.get("oid", "")
+            roles = payload.get("roles", [])
+            if not roles:
+                # Default to admin for now (single-tenant app)
+                admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
+                roles = ["admin"] if email.lower() == admin_email else ["user"]
+
+            return AuthUser(
+                oid=oid or email,
+                email=email,
+                name=name,
+                roles=roles,
+            )
+        except Exception as exc:
+            logger.warning("azure_ad_jwt.decode_error: %s", exc)
+            return None
+
+    # ── Custom 2-part HMAC token (email/password login) ──────────
+    if len(jwt_parts) == 2:
+        try:
+            payload_b64, sig = jwt_parts
+
+            secret = os.environ.get("JWT_SECRET", os.environ.get("AzureWebJobsStorage", "default-secret"))
+            expected_sig = _hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()[:32]
+            if not _hmac.compare_digest(sig, expected_sig):
+                return None
+
+            padded = payload_b64 + "=" * (4 - len(payload_b64) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded))
+
+            if payload.get("exp", 0) < time.time():
+                return None
+
+            email = payload.get("email", "")
+            admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
+            roles = ["admin"] if email == admin_email else ["user"]
+
+            return AuthUser(
+                oid=email,
+                email=email,
+                name=payload.get("name", ""),
+                roles=roles,
+            )
+        except Exception as exc:
+            logger.warning("bearer_token.validation_error: %s", exc)
+            return None
+
+    return None
+
+
 def require_auth(headers: dict[str, str]) -> AuthUser:
     """
     Validate authentication and return the user.
 
+    Checks in order:
+      1. Custom Bearer token (email/password login)
+      2. Azure AD EasyAuth principal header
+
     Raises ValueError if not authenticated.
     """
+    # Try custom Bearer token first
+    user = _validate_bearer_token(headers)
+    if user is not None:
+        return user
+
+    # Try Azure AD EasyAuth
     user = validate_azure_ad_principal(headers)
-    if user is None:
-        raise ValueError("Authentication required. No valid Azure AD principal found.")
-    return user
+    if user is not None:
+        return user
+
+    raise ValueError("Authentication required. No valid Azure AD principal found.")
 
 
 def require_role(headers: dict[str, str], role: str) -> AuthUser:

@@ -190,7 +190,7 @@ export default function SwaggerPage() {
         groups.push({ tag, endpoints });
       }
     }
-    return groups.length > 0 ? { info: { title: migration?.project_name || "API", version: "1.0.0", description: "Auto-generated from Spring Boot controllers" }, groups } : null;
+    return groups.length > 0 ? { info: { title: (migration as any)?.project_name || "API", version: "1.0.0", description: "Auto-generated from Spring Boot controllers" }, groups } : null;
   }, [files, specFile, migration]);
 
   const parsedSpec = useMemo(

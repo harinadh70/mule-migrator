@@ -133,6 +133,13 @@ variable "openai_embedding_capacity" {
 
 # ── Function App ──────────────────────────────────────────────────────────
 
+variable "github_token" {
+  description = "GitHub Personal Access Token for GitHub Copilot Models API (primary LLM provider)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "function_app_python_version" {
   description = "Python version for the Function App"
   type        = string
@@ -173,6 +180,21 @@ variable "azure_ad_admin_group_id" {
   default     = ""
 }
 
+# ── Admin ──────────────────────────────────────────────────────────────────
+
+variable "admin_email" {
+  description = "Admin email for the migrator platform"
+  type        = string
+  default     = "HARINADH70@outlook.com"
+}
+
+variable "admin_password" {
+  description = "Admin password (bcrypt hash or plain for sensitive ops)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 # ── Alerts ─────────────────────────────────────────────────────────────────
 
 variable "alert_email" {
@@ -182,6 +204,25 @@ variable "alert_email" {
 }
 
 # ── Tags ──────────────────────────────────────────────────────────────────
+
+variable "acr_login_server" {
+  description = "ACR login server (e.g., myregistry.azurecr.io)"
+  type        = string
+  default     = ""
+}
+
+variable "acr_admin_username" {
+  description = "ACR admin username"
+  type        = string
+  default     = ""
+}
+
+variable "acr_admin_password" {
+  description = "ACR admin password"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
 
 variable "tags" {
   description = "Tags applied to all resources"

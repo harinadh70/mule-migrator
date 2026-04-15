@@ -1,7 +1,9 @@
 import { lazy, Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/layout/Layout";
+import AuthGuard from "./components/auth/AuthGuard";
 
+const LoginPage = lazy(() => import("./components/auth/LoginPage"));
 const DashboardPage = lazy(() => import("./components/dashboard/DashboardPage"));
 const MigrationPage = lazy(() => import("./components/migration/MigrationPage"));
 const MigrationHistory = lazy(() => import("./components/migration/MigrationHistory"));
@@ -9,6 +11,7 @@ const SwaggerPage = lazy(() => import("./components/swagger/SwaggerPage"));
 const GitHubPage = lazy(() => import("./components/github/GitHubPage"));
 const SettingsPage = lazy(() => import("./components/settings/SettingsPage"));
 const KnowledgeBasePage = lazy(() => import("./components/rag/KnowledgeBasePage"));
+const ValidationPage = lazy(() => import("./components/validation/ValidationPage"));
 
 function PageLoader() {
   return (
@@ -24,24 +27,38 @@ function PageLoader() {
   );
 }
 
+function ProtectedPage({ children }: { children: React.ReactNode }) {
+  return (
+    <AuthGuard>
+      <Layout>
+        <Suspense fallback={<PageLoader />}>{children}</Suspense>
+      </Layout>
+    </AuthGuard>
+  );
+}
+
 export default function App() {
   return (
-    <Layout>
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/migrate" element={<MigrationPage />} />
-          <Route path="/migrate/:id" element={<MigrationPage />} />
-          <Route path="/history" element={<MigrationHistory />} />
-          <Route path="/swagger" element={<SwaggerPage />} />
-          <Route path="/swagger/:migrationId" element={<SwaggerPage />} />
-          <Route path="/github" element={<GitHubPage />} />
-          <Route path="/github/:migrationId" element={<GitHubPage />} />
-          <Route path="/knowledge" element={<KnowledgeBasePage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
-      </Suspense>
-    </Layout>
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
+        {/* Public routes */}
+        <Route path="/login" element={<LoginPage />} />
+
+        {/* Protected routes */}
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={<ProtectedPage><DashboardPage /></ProtectedPage>} />
+        <Route path="/migrate" element={<ProtectedPage><MigrationPage /></ProtectedPage>} />
+        <Route path="/migrate/:id" element={<ProtectedPage><MigrationPage /></ProtectedPage>} />
+        <Route path="/history" element={<ProtectedPage><MigrationHistory /></ProtectedPage>} />
+        <Route path="/swagger" element={<ProtectedPage><SwaggerPage /></ProtectedPage>} />
+        <Route path="/swagger/:migrationId" element={<ProtectedPage><SwaggerPage /></ProtectedPage>} />
+        <Route path="/github" element={<ProtectedPage><GitHubPage /></ProtectedPage>} />
+        <Route path="/github/:migrationId" element={<ProtectedPage><GitHubPage /></ProtectedPage>} />
+        <Route path="/validate/:migrationId" element={<ProtectedPage><ValidationPage /></ProtectedPage>} />
+        <Route path="/knowledge" element={<ProtectedPage><KnowledgeBasePage /></ProtectedPage>} />
+        <Route path="/settings" element={<ProtectedPage><SettingsPage /></ProtectedPage>} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </Suspense>
   );
 }

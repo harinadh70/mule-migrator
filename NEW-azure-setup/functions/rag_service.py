@@ -1,8 +1,11 @@
 """
 RAG Service — semantic search over migration pattern knowledge base.
 
-Uses Azure OpenAI for embeddings (text-embedding-3-large, 3072 dims)
+Uses GitHub Copilot (Models API) for embeddings (text-embedding-3-large, 3072 dims)
 and PostgreSQL with pgvector for vector storage and similarity search.
+
+The GitHub Models API is OpenAI-compatible and uses a GitHub Personal Access Token.
+Endpoint: https://models.inference.ai.azure.com
 """
 
 from __future__ import annotations
@@ -16,46 +19,54 @@ from typing import Any, Optional
 logger = logging.getLogger("rag_service")
 
 # ---------------------------------------------------------------------------
-#  Azure OpenAI embedding client (lazy singleton)
+#  GitHub Copilot (Models API) embedding client (lazy singleton)
 # ---------------------------------------------------------------------------
 
 _openai_client = None
 
+# GitHub Models API endpoint
+GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com"
+
 
 def _get_openai_client():
     """
-    Return an Azure OpenAI client using managed identity.
+    Return an OpenAI-compatible client pointed at GitHub Models API.
 
-    Falls back to API key if AZURE_OPENAI_KEY is set (local dev).
+    Uses GITHUB_TOKEN (Personal Access Token) for authentication.
+    Falls back to Azure OpenAI if AZURE_OPENAI_ENDPOINT is set (backward compat).
     """
     global _openai_client
     if _openai_client is not None:
         return _openai_client
 
-    from openai import AzureOpenAI
+    from openai import OpenAI
 
-    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-    api_key = os.getenv("AZURE_OPENAI_API_KEY", os.getenv("AZURE_OPENAI_KEY", ""))
+    github_token = os.getenv("GITHUB_TOKEN", "")
 
-    if api_key:
-        _openai_client = AzureOpenAI(
-            azure_endpoint=endpoint,
-            api_key=api_key,
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-14"),
+    if github_token:
+        # Primary: GitHub Copilot (Models API)
+        _openai_client = OpenAI(
+            base_url=GITHUB_MODELS_ENDPOINT,
+            api_key=github_token,
         )
+        logger.info("rag_service.client_initialized: provider=github_copilot")
     else:
-        # Use managed identity via DefaultAzureCredential
-        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-
-        credential = DefaultAzureCredential()
-        token_provider = get_bearer_token_provider(
-            credential, "https://cognitiveservices.azure.com/.default"
-        )
-        _openai_client = AzureOpenAI(
-            azure_endpoint=endpoint,
-            azure_ad_token_provider=token_provider,
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-14"),
-        )
+        # Fallback: Azure OpenAI (backward compatibility)
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+        api_key = os.getenv("AZURE_OPENAI_API_KEY", os.getenv("AZURE_OPENAI_KEY", ""))
+        if azure_endpoint and api_key:
+            from openai import AzureOpenAI
+            _openai_client = AzureOpenAI(
+                azure_endpoint=azure_endpoint,
+                api_key=api_key,
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-14"),
+            )
+            logger.info("rag_service.client_initialized: provider=azure_openai (fallback)")
+        else:
+            raise RuntimeError(
+                "No AI provider configured. Set GITHUB_TOKEN for GitHub Copilot "
+                "or AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY for Azure OpenAI."
+            )
 
     return _openai_client
 
@@ -64,16 +75,16 @@ def _get_openai_client():
 #  Embedding generation
 # ---------------------------------------------------------------------------
 
-EMBEDDING_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-large")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
 EMBEDDING_DIMENSION = 3072
 
 
 def generate_embedding(text: str) -> list[float]:
-    """Generate an embedding vector for the given text."""
+    """Generate an embedding vector for the given text using GitHub Copilot."""
     client = _get_openai_client()
     response = client.embeddings.create(
         input=text,
-        model=EMBEDDING_DEPLOYMENT,
+        model=EMBEDDING_MODEL,
     )
     return response.data[0].embedding
 

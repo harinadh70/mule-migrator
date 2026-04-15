@@ -58,10 +58,25 @@ resource "azurerm_storage_queue" "build_queue" {
   storage_account_name = azurerm_storage_account.func.name
 }
 
-# ── Storage Table (build logs) ─────────────────────────────────────────────
+resource "azurerm_storage_queue" "validation_queue" {
+  name                 = "validation-queue"
+  storage_account_name = azurerm_storage_account.func.name
+}
+
+resource "azurerm_storage_queue" "validation_teardown_queue" {
+  name                 = "validation-teardown-queue"
+  storage_account_name = azurerm_storage_account.func.name
+}
+
+# ── Storage Tables ───────────────────────────────────────────────────────────
 
 resource "azurerm_storage_table" "build_logs" {
   name                 = "buildlogs"
+  storage_account_name = azurerm_storage_account.func.name
+}
+
+resource "azurerm_storage_table" "validation_logs" {
+  name                 = "validationlogs"
   storage_account_name = azurerm_storage_account.func.name
 }
 
@@ -123,7 +138,11 @@ resource "azurerm_linux_function_app" "main" {
     # Redis (resolved from Key Vault)
     "REDIS_URL"                           = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.main.vault_uri}secrets/redis-connection-string/)"
 
-    # Azure OpenAI
+    # GitHub Copilot (primary LLM provider)
+    "GITHUB_TOKEN"                        = var.github_token
+    "GITHUB_COPILOT_MODEL"                = "gpt-4.1"
+
+    # Azure OpenAI (fallback LLM provider)
     "AZURE_OPENAI_ENDPOINT"               = azurerm_cognitive_account.openai.endpoint
     "AZURE_OPENAI_CHAT_DEPLOYMENT"        = var.openai_chat_model
     "AZURE_OPENAI_EMBEDDING_DEPLOYMENT"   = var.openai_embedding_model
@@ -136,8 +155,32 @@ resource "azurerm_linux_function_app" "main" {
     "AZURE_AD_TENANT_ID"                  = data.azuread_client_config.current.tenant_id
     "AZURE_AD_CLIENT_ID"                  = azuread_application.migrator.client_id
 
+    # Admin
+    "ADMIN_EMAIL"                         = var.admin_email
+    "ADMIN_PASSWORD"                      = var.admin_password
+    "ENABLE_LLM"                          = "true"
+
+    # Azure OpenAI API Key (for fallback)
+    "AZURE_OPENAI_API_KEY"               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.main.vault_uri}secrets/openai-api-key/)"
+
+    # Direct PostgreSQL connection params (for compatibility)
+    "PGHOST"                              = azurerm_postgresql_flexible_server.main.fqdn
+    "PGPORT"                              = "5432"
+    "PGDATABASE"                          = "migrator"
+    "PGUSER"                              = var.postgresql_admin_username
+    "PGPASSWORD"                          = random_password.postgresql.result
+    "PGSSLMODE"                           = "require"
+
     # CORS
     "CORS_ORIGINS"                        = "*"
+
+    # Container Registry (for validation deployments)
+    "ACR_LOGIN_SERVER"                    = var.acr_login_server
+    "ACR_ADMIN_USERNAME"                  = var.acr_admin_username
+    "ACR_ADMIN_PASSWORD"                  = var.acr_admin_password
+    "AZURE_SUBSCRIPTION_ID"               = data.azurerm_client_config.current.subscription_id
+    "RESOURCE_GROUP"                      = azurerm_resource_group.main.name
+    "AZURE_LOCATION"                      = var.location
 
     # App Insights
     "APP_INSIGHTS_CONNECTION_STRING"      = azurerm_application_insights.main.connection_string
@@ -193,6 +236,14 @@ resource "azurerm_key_vault_access_policy" "function_app" {
 resource "azurerm_key_vault_secret" "postgresql_connection_string" {
   name         = "postgresql-connection-string"
   value        = "host=${azurerm_postgresql_flexible_server.main.fqdn} port=5432 dbname=migrator user=${var.postgresql_admin_username} password=${random_password.postgresql.result} sslmode=require"
+  key_vault_id = azurerm_key_vault.main.id
+
+  depends_on = [azurerm_key_vault_access_policy.deployer]
+}
+
+resource "azurerm_key_vault_secret" "openai_api_key" {
+  name         = "openai-api-key"
+  value        = azurerm_cognitive_account.openai.primary_access_key
   key_vault_id = azurerm_key_vault.main.id
 
   depends_on = [azurerm_key_vault_access_policy.deployer]

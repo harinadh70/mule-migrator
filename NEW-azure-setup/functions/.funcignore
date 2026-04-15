@@ -16,3 +16,4 @@ __pycache__
 *.tfstate
 *.tfstate.backup
 .terraform/
+seed_knowledge.py

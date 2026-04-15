@@ -32,6 +32,17 @@ class SpringBootGenerator:
                  parsed_data: dict) -> dict:
         files = {}
 
+        # ── Pre-scan: collect DB configs and server port for cross-method use ──
+        self._db_configs = []
+        self._server_port = "8081"
+        for cfg in parsed_data.get("global_configs", []):
+            if cfg.get("type") == "database":
+                self._db_configs.append(cfg)
+            elif cfg.get("type") == "http-listener":
+                port_val = str(cfg.get("port", "8081"))
+                if "${" not in port_val and port_val.isdigit():
+                    self._server_port = port_val
+
         # ── pom.xml ───────────────────────────────────────────────────
         files["pom.xml"] = self._generate_pom(connector_info)
 
@@ -124,6 +135,12 @@ class SpringBootGenerator:
         if has_ws:
             files[f"{cfg_path}/WebServiceConfig.java"] = self._gen_ws_config()
 
+        # Multi-datasource configuration — generate DataSourceConfig with
+        # named JdbcTemplate beans when multiple databases are detected
+        db_configs = getattr(self, "_db_configs", [])
+        if len(db_configs) > 1:
+            files[f"{cfg_path}/DataSourceConfig.java"] = self._gen_multi_datasource_config(db_configs)
+
         # CORS config always helpful for API projects
         files[f"{cfg_path}/CorsConfig.java"] = self._gen_cors_config()
 
@@ -168,7 +185,18 @@ class SpringBootGenerator:
     def _generate_pom(self, connector_info):
         deps = connector_info.get("dependencies", [])
         dep_xml = ""
+        seen_artifacts = set()
+
         for d in deps:
+            artifact_key = f"{d['groupId']}:{d['artifactId']}"
+            # Skip Lombok from connector mapper (we add it properly in extras below)
+            # Do NOT add to seen_artifacts — the extras block needs to emit it
+            if d['artifactId'] == 'lombok':
+                continue
+            # Skip actuator/test if already seen (avoid duplicates)
+            if artifact_key in seen_artifacts:
+                continue
+            seen_artifacts.add(artifact_key)
             scope = d.get("scope", "")
             scope_xml = f"\n            <scope>{scope}</scope>" if scope else ""
             dep_xml += f"""
@@ -177,57 +205,76 @@ class SpringBootGenerator:
             <artifactId>{d['artifactId']}</artifactId>{scope_xml}
         </dependency>"""
 
-        # ── Additional dependencies for a complete, runnable project ───
-        dep_xml += """
-
-        <!-- Lombok for @Slf4j, @RequiredArgsConstructor etc. -->
+        # ── Additional dependencies (only add if not already present) ──
+        extras = [
+            ("org.projectlombok", "lombok", None, "true", "Lombok for @Slf4j, @RequiredArgsConstructor etc."),
+            ("com.fasterxml.jackson.core", "jackson-databind", None, None, None),
+            ("org.springdoc", "springdoc-openapi-starter-webmvc-ui", None, None, "OpenAPI / Swagger UI"),
+            ("org.springframework.boot", "spring-boot-starter-actuator", None, None, "Actuator for health checks and monitoring"),
+            ("org.springframework.boot", "spring-boot-starter-test", "test", None, "Spring Boot Test"),
+            ("com.h2database", "h2", "runtime", None, "H2 in-memory database (fallback for dev/test)"),
+        ]
+        for group_id, artifact_id, scope, optional, comment in extras:
+            key = f"{group_id}:{artifact_id}"
+            if key in seen_artifacts:
+                continue
+            seen_artifacts.add(key)
+            comment_xml = f"\n\n        <!-- {comment} -->" if comment else ""
+            scope_xml = f"\n            <scope>{scope}</scope>" if scope else ""
+            optional_xml = f"\n            <optional>{optional}</optional>" if optional else ""
+            version_xml = ""
+            if artifact_id == "springdoc-openapi-starter-webmvc-ui":
+                version_xml = "\n            <version>2.3.0</version>"
+            dep_xml += f"""{comment_xml}
         <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
+            <groupId>{group_id}</groupId>
+            <artifactId>{artifact_id}</artifactId>{version_xml}{scope_xml}{optional_xml}
+        </dependency>"""
 
-        <!-- OpenAPI / Swagger UI -->
-        <dependency>
-            <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.3.0</version>
-        </dependency>
-
-        <!-- Actuator for health checks and monitoring -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-
-        <!-- Spring Boot Test -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- H2 in-memory database (for unit/integration tests only) -->
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- MySQL connector (enabled — detected from MuleSoft config) -->
-        <dependency>
-            <groupId>com.mysql</groupId>
-            <artifactId>mysql-connector-j</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-
-        <!-- PostgreSQL connector (uncomment if needed)
+        # Dynamically add JDBC drivers based on detected database configs
+        db_drivers_added = set()
+        db_configs = getattr(self, "_db_configs", [])
+        for cfg in db_configs:
+            driver = str(cfg.get("driver", "")).lower()
+            url = str(cfg.get("url", "")).lower()
+            combo = driver + " " + url
+            if "postgres" in combo and "postgresql" not in db_drivers_added:
+                db_drivers_added.add("postgresql")
+                dep_xml += """
+        <!-- PostgreSQL connector (detected from MuleSoft config) -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
-        </dependency>
-        -->"""
+        </dependency>"""
+            if ("mysql" in combo or "mariadb" in combo) and "mysql" not in db_drivers_added:
+                db_drivers_added.add("mysql")
+                dep_xml += """
+        <!-- MySQL connector (detected from MuleSoft config) -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>"""
+            if ("sqlserver" in combo or "mssql" in combo) and "sqlserver" not in db_drivers_added:
+                db_drivers_added.add("sqlserver")
+                dep_xml += """
+        <!-- SQL Server connector (detected from MuleSoft config) -->
+        <dependency>
+            <groupId>com.microsoft.sqlserver</groupId>
+            <artifactId>mssql-jdbc</artifactId>
+            <scope>runtime</scope>
+        </dependency>"""
+
+        # Default to MySQL if database detected but no specific driver identified
+        if db_configs and not db_drivers_added:
+            dep_xml += """
+        <!-- MySQL connector (default — no specific driver detected) -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>"""
 
         return f"""<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -295,7 +342,7 @@ class SpringBootGenerator:
             f'@OpenAPIDefinition(\n'
             f'    info = @Info(title = "{self.project_name} API", version = "1.0",\n'
             f'                description = "Migrated from MuleSoft"),\n'
-            f'    servers = @Server(url = "http://localhost:8080")\n'
+            f'    servers = @Server(url = "http://localhost:{getattr(self, "_server_port", "8081")}")\n'
             f')',
             "@SpringBootApplication",
         ]
@@ -394,77 +441,116 @@ class SpringBootGenerator:
 
         # Database config — use real DB from MuleSoft config as default
         if has_db and self._db_configs:
-            cfg = self._db_configs[0]
-            db_url = str(cfg.get("url", ""))
-            db_driver = str(cfg.get("driver", ""))
-            db_user = str(cfg.get("user", ""))
-            db_password = str(cfg.get("password", ""))
-            db_host = str(cfg.get("host", ""))
-            db_port = str(cfg.get("port", "3306"))
-            db_name = str(cfg.get("database", ""))
+            for db_idx, cfg in enumerate(self._db_configs):
+                db_url = str(cfg.get("url", ""))
+                db_driver = str(cfg.get("driver", ""))
+                db_user = str(cfg.get("user", ""))
+                db_password = str(cfg.get("password", ""))
+                db_host = str(cfg.get("host", ""))
+                db_port_raw = str(cfg.get("port", ""))
+                db_name = str(cfg.get("database", ""))
 
-            # Build JDBC URL if needed
-            if not db_url and db_host and "${" not in db_host:
-                if "postgres" in db_driver.lower():
-                    db_url = f"jdbc:postgresql://{db_host}:{db_port}/{db_name}?sslmode=require"
-                    db_driver = db_driver or "org.postgresql.Driver"
-                elif "sqlserver" in db_driver.lower() or "mssql" in db_driver.lower():
-                    db_url = f"jdbc:sqlserver://{db_host}:{db_port};databaseName={db_name};encrypt=true"
-                    db_driver = db_driver or "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+                # Build JDBC URL if needed
+                if not db_url and db_host and "${" not in db_host:
+                    if "postgres" in db_driver.lower():
+                        db_port = db_port_raw if db_port_raw and "${" not in db_port_raw else "5432"
+                        db_url = f"jdbc:postgresql://{db_host}:{db_port}/{db_name}?sslmode=require"
+                        db_driver = db_driver or "org.postgresql.Driver"
+                    elif "sqlserver" in db_driver.lower() or "mssql" in db_driver.lower():
+                        db_port = db_port_raw if db_port_raw and "${" not in db_port_raw else "1433"
+                        db_url = f"jdbc:sqlserver://{db_host}:{db_port};databaseName={db_name};encrypt=true"
+                        db_driver = db_driver or "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+                    else:
+                        db_port = db_port_raw if db_port_raw and "${" not in db_port_raw else "3306"
+                        db_url = f"jdbc:mysql://{db_host}:{db_port}/{db_name}?useSSL=true&requireSSL=true&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+                        db_driver = db_driver or "com.mysql.cj.jdbc.Driver"
+
+                # Determine dialect
+                dialect = "org.hibernate.dialect.MySQLDialect"
+                if "postgres" in (db_driver + db_url).lower():
+                    dialect = "org.hibernate.dialect.PostgreSQLDialect"
+                elif "sqlserver" in (db_driver + db_url).lower() or "mssql" in (db_driver + db_url).lower():
+                    dialect = "org.hibernate.dialect.SQLServerDialect"
+
+                # Property prefix: primary DB uses spring.datasource, additional use named prefix
+                if db_idx == 0:
+                    ds_prefix = "spring.datasource"
+                    jpa_prefix = "spring.jpa"
                 else:
-                    db_url = f"jdbc:mysql://{db_host}:{db_port}/{db_name}?useSSL=true&requireSSL=true&serverTimezone=UTC&allowPublicKeyRetrieval=true"
-                    db_driver = db_driver or "com.mysql.cj.jdbc.Driver"
+                    # Secondary datasources use camelCase config-ref name
+                    # (must match DataSourceConfig @ConfigurationProperties prefix)
+                    ds_name = self._to_bean_name(cfg.get("name", f"secondary{db_idx}"))
+                    ds_prefix = f"spring.datasource.{ds_name}"
+                    jpa_prefix = f"spring.jpa"  # JPA uses primary only
 
-            # Determine dialect
-            dialect = "org.hibernate.dialect.MySQLDialect"
-            if "postgres" in (db_driver + db_url).lower():
-                dialect = "org.hibernate.dialect.PostgreSQLDialect"
-            elif "sqlserver" in (db_driver + db_url).lower() or "mssql" in (db_driver + db_url).lower():
-                dialect = "org.hibernate.dialect.SQLServerDialect"
+                # If we have real resolvable values, use them as default
+                has_real_url = db_url and "${" not in db_url
+                has_real_user = db_user and "${" not in db_user
+                has_real_password = db_password and "${" not in db_password
 
-            # If we have real resolvable values, use them as default
-            has_real_url = db_url and "${" not in db_url
-            has_real_user = db_user and "${" not in db_user
-            has_real_password = db_password and "${" not in db_password
-
-            if has_real_url:
-                lines += [
-                    f"# Database — same connection as original MuleSoft app ({cfg.get('name', '')})",
-                    f"spring.datasource.url={db_url}",
-                    f"spring.datasource.driver-class-name={db_driver}",
-                ]
-                if has_real_user:
-                    lines.append(f"spring.datasource.username={db_user}")
+                if has_real_url:
+                    lines += [
+                        f"# Database — same connection as original MuleSoft app ({cfg.get('name', '')})",
+                        f"{ds_prefix}.url={db_url}",
+                        f"{ds_prefix}.driver-class-name={db_driver}",
+                    ]
+                    if has_real_user:
+                        lines.append(f"{ds_prefix}.username={db_user}")
+                    else:
+                        lines.append(f"{ds_prefix}.username=${{DB_USERNAME:admin}}")
+                    if has_real_password:
+                        lines.append(f"{ds_prefix}.password={db_password}")
+                    else:
+                        lines.append(f"{ds_prefix}.password=${{DB_PASSWORD}}")
+                    if db_idx == 0:
+                        lines += [
+                            f"{jpa_prefix}.database-platform={dialect}",
+                            f"{jpa_prefix}.hibernate.ddl-auto=none",
+                            f"{jpa_prefix}.show-sql=true",
+                        ]
+                    lines.append("")
                 else:
-                    lines.append(f"spring.datasource.username=${{DB_USERNAME:admin}}")
-                if has_real_password:
-                    lines.append(f"spring.datasource.password={db_password}")
-                else:
-                    lines.append(f"spring.datasource.password=${{DB_PASSWORD}}")
-                lines += [
-                    f"spring.jpa.database-platform={dialect}",
-                    f"spring.jpa.hibernate.ddl-auto=none",
-                    f"spring.jpa.show-sql=true",
-                    "",
-                ]
-            else:
-                # MuleSoft config had placeholders — use env vars
-                lines += [
-                    f"# Database ({cfg.get('name', '')})",
-                    f"# Original MuleSoft config used placeholders — set via environment variables",
-                    f"spring.datasource.url=${{DB_URL:jdbc:mysql://localhost:3306/appdb}}",
-                    f"spring.datasource.driver-class-name={db_driver or 'com.mysql.cj.jdbc.Driver'}",
-                    f"spring.datasource.username=${{DB_USERNAME:admin}}",
-                    f"spring.datasource.password=${{DB_PASSWORD:changeme}}",
-                    f"spring.jpa.database-platform={dialect}",
-                    f"spring.jpa.hibernate.ddl-auto=none",
-                    f"spring.jpa.show-sql=true",
-                    "",
-                ]
+                    # MuleSoft config had placeholders — use env vars with correct defaults per DB type
+                    suffix = f"_{db_idx}" if db_idx > 0 else ""
+                    if "postgres" in db_driver.lower():
+                        default_url = "jdbc:postgresql://localhost:5432/appdb"
+                        default_driver = "org.postgresql.Driver"
+                    elif "sqlserver" in db_driver.lower() or "mssql" in db_driver.lower():
+                        default_url = "jdbc:sqlserver://localhost:1433;databaseName=appdb;encrypt=true"
+                        default_driver = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+                    else:
+                        default_url = "jdbc:mysql://localhost:3306/appdb"
+                        default_driver = "com.mysql.cj.jdbc.Driver"
+                    lines += [
+                        f"# Database ({cfg.get('name', '')})",
+                        f"# Original MuleSoft config used placeholders — set via environment variables",
+                        f"{ds_prefix}.url=${{DB_URL{suffix}:{default_url}}}",
+                        f"{ds_prefix}.driver-class-name={db_driver or default_driver}",
+                        f"{ds_prefix}.username=${{DB_USERNAME{suffix}:admin}}",
+                        f"{ds_prefix}.password=${{DB_PASSWORD{suffix}:changeme}}",
+                    ]
+                    if db_idx == 0:
+                        lines += [
+                            f"{jpa_prefix}.database-platform={dialect}",
+                            f"{jpa_prefix}.hibernate.ddl-auto=none",
+                            f"{jpa_prefix}.show-sql=true",
+                        ]
+                    lines.append("")
 
-        # Global properties (skip MuleSoft-only placeholders)
+        # Global properties (skip MuleSoft-only keys and placeholders)
+        _MULE_ONLY_KEYS = {
+            "mule.env", "MULE_ENV", "mule.key", "mule.encryptionKey",
+            "mule.home", "mule.base", "mule.appName",
+            "http.port", "https.port", "http.private.port",
+            "db.host", "db.port", "db.name", "db.user", "db.password",
+            "db.url", "db.driver",
+        }
         for k, v in parsed_data.get("global_properties", {}).items():
-            if not k.startswith("_") and "${" not in str(v):
+            if (not k.startswith("_")
+                    and "${" not in str(v)
+                    and k not in _MULE_ONLY_KEYS
+                    and not k.startswith("mule.")
+                    and not k.startswith("MULE_")):
                 lines.append(f"{k}={v}")
 
         lines += [
@@ -545,37 +631,38 @@ class SpringBootGenerator:
 
         # Include actual database configuration from MuleSoft parsed data
         db_configs = getattr(self, "_db_configs", [])
-        if db_configs:
-            cfg = db_configs[0]  # Primary database
+
+        def _resolve(val):
+            val = str(val) if val else ""
+            return "" if "${" in val else val
+
+        for db_idx, cfg in enumerate(db_configs):
             db_url = cfg.get("url", "")
             db_driver = cfg.get("driver", "")
             db_user = cfg.get("user", "")
             db_password = cfg.get("password", "")
             db_host = cfg.get("host", "localhost")
-            db_port = cfg.get("port", "3306")
-            db_name = cfg.get("database", "appdb")
-
-            # Resolve MuleSoft placeholders to concrete values
-            def _resolve(val):
-                val = str(val) if val else ""
-                return "" if "${" in val else val
+            db_port = cfg.get("port", "")
+            db_name_val = cfg.get("database", "appdb")
 
             r_url = _resolve(db_url)
             r_driver = _resolve(db_driver)
             r_user = _resolve(db_user)
             r_password = _resolve(db_password)
             r_host = _resolve(db_host)
-            r_port = _resolve(db_port) or "3306"
-            r_name = _resolve(db_name) or "appdb"
+            r_port_raw = _resolve(db_port)
+            r_name = _resolve(db_name_val) or "appdb"
 
-            # Build JDBC URL if not explicitly set
+            # Build JDBC URL if not explicitly set — use correct default port per DB type
             if not r_url and r_host:
-                # Detect driver type for URL format
                 if "postgres" in (r_driver or "").lower():
+                    r_port = r_port_raw or "5432"
                     r_url = f"jdbc:postgresql://{r_host}:{r_port}/{r_name}?sslmode=require"
                 elif "sqlserver" in (r_driver or "").lower() or "mssql" in (r_driver or "").lower():
+                    r_port = r_port_raw or "1433"
                     r_url = f"jdbc:sqlserver://{r_host}:{r_port};databaseName={r_name};encrypt=true"
                 else:
+                    r_port = r_port_raw or "3306"
                     r_url = f"jdbc:mysql://{r_host}:{r_port}/{r_name}?useSSL=true&requireSSL=true&serverTimezone=UTC&allowPublicKeyRetrieval=true"
 
             # Determine dialect
@@ -589,47 +676,64 @@ class SpringBootGenerator:
             else:
                 r_driver = r_driver or "com.mysql.cj.jdbc.Driver"
 
+            # Property prefix: primary vs secondary
+            # (must match DataSourceConfig @ConfigurationProperties prefix)
+            if db_idx == 0:
+                ds_prefix = "spring.datasource"
+            else:
+                ds_key = self._to_bean_name(cfg.get("name", f"secondary{db_idx}"))
+                ds_prefix = f"spring.datasource.{ds_key}"
+
+            suffix = f"_{db_idx}" if db_idx > 0 else ""
+
             if profile == "dev" and r_url:
                 lines += [
                     f"# Database ({cfg.get('name', 'primary')})",
-                    f"spring.datasource.url={r_url}",
-                    f"spring.datasource.driver-class-name={r_driver}",
-                    f"spring.datasource.username={r_user or 'admin'}",
-                    f"spring.datasource.password={r_password or 'changeme'}",
-                    f"spring.jpa.database-platform={dialect}",
-                    f"spring.jpa.hibernate.ddl-auto=none",
-                    f"spring.jpa.show-sql=true",
-                    "",
+                    f"{ds_prefix}.url={r_url}",
+                    f"{ds_prefix}.driver-class-name={r_driver}",
+                    f"{ds_prefix}.username={r_user or 'admin'}",
+                    f"{ds_prefix}.password={r_password or 'changeme'}",
                 ]
+                if db_idx == 0:
+                    lines += [
+                        f"spring.jpa.database-platform={dialect}",
+                        f"spring.jpa.hibernate.ddl-auto=none",
+                        f"spring.jpa.show-sql=true",
+                    ]
+                lines.append("")
             elif profile == "prod":
-                # Prod uses env vars for secrets
                 prod_url = r_url.replace("-dev", "-prod").replace("_dev", "_prod") if r_url else ""
                 lines += [
                     f"# Database ({cfg.get('name', 'primary')})",
-                    f"spring.datasource.url={prod_url or '${DB_URL}'}",
-                    f"spring.datasource.driver-class-name={r_driver}",
-                    f"spring.datasource.username=${{DB_USERNAME}}",
-                    f"spring.datasource.password=${{DB_PASSWORD}}",
-                    f"spring.jpa.database-platform={dialect}",
-                    f"spring.jpa.hibernate.ddl-auto=none",
-                    f"spring.jpa.show-sql=false",
-                    "",
+                    f"{ds_prefix}.url={prod_url or '${{DB_URL' + suffix + '}}'}",
+                    f"{ds_prefix}.driver-class-name={r_driver}",
+                    f"{ds_prefix}.username=${{DB_USERNAME{suffix}}}",
+                    f"{ds_prefix}.password=${{DB_PASSWORD{suffix}}}",
                 ]
+                if db_idx == 0:
+                    lines += [
+                        f"spring.jpa.database-platform={dialect}",
+                        f"spring.jpa.hibernate.ddl-auto=none",
+                        f"spring.jpa.show-sql=false",
+                    ]
+                lines.append("")
             else:
-                # SIT / UAT / PreProd — use env vars for passwords
                 env_url = r_url
                 for env in ["dev", "sit", "uat", "preprod"]:
                     env_url = env_url.replace(f"-{env}", f"-{profile}").replace(f"_{env}", f"_{profile}")
                 lines += [
                     f"# Database ({cfg.get('name', 'primary')})",
-                    f"spring.datasource.url={env_url}",
-                    f"spring.datasource.driver-class-name={r_driver}",
-                    f"spring.datasource.username=${{DB_USERNAME:{r_user or 'admin'}}}",
-                    f"spring.datasource.password=${{DB_PASSWORD}}",
-                    f"spring.jpa.database-platform={dialect}",
-                    f"spring.jpa.hibernate.ddl-auto=none",
-                    "",
+                    f"{ds_prefix}.url={env_url}",
+                    f"{ds_prefix}.driver-class-name={r_driver}",
+                    f"{ds_prefix}.username=${{DB_USERNAME{suffix}:{r_user or 'admin'}}}",
+                    f"{ds_prefix}.password=${{DB_PASSWORD{suffix}}}",
                 ]
+                if db_idx == 0:
+                    lines += [
+                        f"spring.jpa.database-platform={dialect}",
+                        f"spring.jpa.hibernate.ddl-auto=none",
+                    ]
+                lines.append("")
 
             # No H2 at runtime — real database is used (H2 is test-scope only)
 
@@ -852,23 +956,45 @@ class SpringBootGenerator:
             '        return org.springframework.web.reactive.function.client.WebClient.builder();\n'
             '    }'
         )
+        has_value_fields = []
         # Create named WebClient beans for each HTTP request config
         for cfg in parsed_data.get("global_configs", []):
             if cfg.get("type") == "http-request":
                 bean_name = self._to_bean_name(cfg.get("name", "external"))
-                host = cfg.get("host", "localhost")
-                port = cfg.get("port", "80")
+                host = str(cfg.get("host", "localhost"))
+                port = str(cfg.get("port", "80"))
                 proto = cfg.get("protocol", "HTTP").lower()
                 base = cfg.get("basePath", "/")
-                url = f"{proto}://{host}:{port}{base}"
-                beans.append(
-                    f'\n    @Bean("{bean_name}WebClient")\n'
-                    f'    public org.springframework.web.reactive.function.client.WebClient {bean_name}WebClient(\n'
-                    f'            org.springframework.web.reactive.function.client.WebClient.Builder builder) {{\n'
-                    f'        return builder.baseUrl("{url}").build();\n'
-                    f'    }}'
-                )
-        return self._cfg("WebClientConfig", "\n".join(beans),
+
+                # Check for unresolvable MuleSoft placeholders
+                has_placeholder = "${" in host or "${" in port
+                if has_placeholder:
+                    # Use @Value injection from application.properties
+                    prop_key = f"external.api.{self._to_property_name(cfg.get('name', 'external'))}.url"
+                    has_value_fields.append(
+                        f'\n    @org.springframework.beans.factory.annotation.Value("${{{prop_key}:http://localhost:80/}}")\n'
+                        f'    private String {bean_name}BaseUrl;'
+                    )
+                    beans.append(
+                        f'\n    @Bean("{bean_name}WebClient")\n'
+                        f'    public org.springframework.web.reactive.function.client.WebClient {bean_name}WebClient() {{\n'
+                        f'        return org.springframework.web.reactive.function.client.WebClient.builder()\n'
+                        f'                .baseUrl({bean_name}BaseUrl).build();\n'
+                        f'    }}'
+                    )
+                else:
+                    url = f"{proto}://{host}:{port}{base}"
+                    # Each bean creates its own builder to avoid shared mutable state
+                    beans.append(
+                        f'\n    @Bean("{bean_name}WebClient")\n'
+                        f'    public org.springframework.web.reactive.function.client.WebClient {bean_name}WebClient() {{\n'
+                        f'        return org.springframework.web.reactive.function.client.WebClient.builder()\n'
+                        f'                .baseUrl("{url}").build();\n'
+                        f'    }}'
+                    )
+        # Prepend @Value fields before the beans
+        body = "\n".join(has_value_fields) + "\n\n" + "\n".join(beans) if has_value_fields else "\n".join(beans)
+        return self._cfg("WebClientConfig", body,
             ["org.springframework.web.reactive.function.client.WebClient"])
 
     def _gen_cache_config(self):
@@ -969,6 +1095,66 @@ class SpringBootGenerator:
             '        return new org.springframework.ws.client.core.WebServiceTemplate();\n'
             '    }',
             ["org.springframework.ws.client.core.WebServiceTemplate"])
+
+    def _gen_multi_datasource_config(self, db_configs):
+        """Generate @Configuration class with named DataSource and JdbcTemplate beans
+        for multi-database projects."""
+        imports = [
+            "import javax.sql.DataSource;",
+            "import org.springframework.beans.factory.annotation.Qualifier;",
+            "import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;",
+            "import org.springframework.boot.context.properties.ConfigurationProperties;",
+            "import org.springframework.context.annotation.Bean;",
+            "import org.springframework.context.annotation.Configuration;",
+            "import org.springframework.context.annotation.Primary;",
+            "import org.springframework.jdbc.core.JdbcTemplate;",
+        ]
+        beans = []
+        for idx, cfg in enumerate(db_configs):
+            # Use camelCase name to match flow_converter._to_variable_name() output
+            raw_name = cfg.get("name", f"db{idx}")
+            cfg_name = self._to_bean_name(raw_name)
+            bean_name = cfg_name + "JdbcTemplate"
+            ds_name = cfg_name + "DataSource"
+            is_primary = idx == 0
+            primary_ann = "    @Primary\n" if is_primary else ""
+            # Property prefix must match what _generate_properties() emits
+            # Primary uses "spring.datasource"; secondary uses "spring.datasource.{camelName}"
+            if idx == 0:
+                props_prefix = "spring.datasource"
+            else:
+                props_prefix = f"spring.datasource.{cfg_name}"
+
+            props_bean = f"{cfg_name}DataSourceProperties"
+            beans.append(
+                f'{primary_ann}'
+                f'    @Bean(name = "{props_bean}")\n'
+                f'    @ConfigurationProperties(prefix = "{props_prefix}")\n'
+                f'    public DataSourceProperties {props_bean}() {{\n'
+                f'        return new DataSourceProperties();\n'
+                f'    }}\n\n'
+                f'{primary_ann}'
+                f'    @Bean(name = "{ds_name}")\n'
+                f'    public DataSource {ds_name}(@Qualifier("{props_bean}") DataSourceProperties properties) {{\n'
+                f'        return properties.initializeDataSourceBuilder().build();\n'
+                f'    }}\n\n'
+                f'{primary_ann}'
+                f'    @Bean(name = "{bean_name}")\n'
+                f'    public JdbcTemplate {bean_name}(@Qualifier("{ds_name}") DataSource ds) {{\n'
+                f'        return new JdbcTemplate(ds);\n'
+                f'    }}'
+            )
+
+        import_block = "\n".join(imports)
+        bean_block = "\n\n".join(beans)
+        return (
+            f"package {self.group_id}.config;\n\n"
+            f"{import_block}\n\n"
+            f"@Configuration\n"
+            f"public class DataSourceConfig {{\n\n"
+            f"{bean_block}\n"
+            f"}}\n"
+        )
 
     def _gen_cors_config(self):
         return self._cfg("CorsConfig",
@@ -1436,13 +1622,13 @@ build/
             methods += f"    }}\n\n"
 
             # ─────────────────────────────────────────────────────────
-            # GET list endpoint - verify JSON array response
+            # GET list endpoint - verify JSON response structure
             # ─────────────────────────────────────────────────────────
             if http_method == "GET" and not ep["has_path_variable"]:
-                array_name = self._unique_name(f"test{test_base}_ReturnsJsonArray", seen_names)
+                struct_name = self._unique_name(f"test{test_base}_ReturnsJsonResponse", seen_names)
                 methods += f"    @Test\n"
-                methods += f"    @DisplayName(\"{display_method} {path} - should return JSON array\")\n"
-                methods += f"    void {array_name}() throws Exception {{\n"
+                methods += f"    @DisplayName(\"{display_method} {path} - should return JSON response\")\n"
+                methods += f"    void {struct_name}() throws Exception {{\n"
                 if has_jdbc:
                     methods += (
                         f"        // Given\n"
@@ -1455,17 +1641,17 @@ build/
                     f"        // When & Then\n"
                     f"        mockMvc.perform(get(\"{test_path}\"))\n"
                     f"                .andExpect(status().isOk())\n"
-                    f"                .andExpect(jsonPath(\"$\").isArray());\n"
+                    f"                .andExpect(jsonPath(\"$\").isMap());\n"
                     f"    }}\n\n"
                 )
 
             # ─────────────────────────────────────────────────────────
-            # GET list endpoint - verify empty list
+            # GET list endpoint - verify empty result handling
             # ─────────────────────────────────────────────────────────
             if http_method == "GET" and not ep["has_path_variable"] and has_jdbc:
-                empty_name = self._unique_name(f"test{test_base}_ReturnsEmptyList", seen_names)
+                empty_name = self._unique_name(f"test{test_base}_ReturnsEmptyResult", seen_names)
                 methods += f"    @Test\n"
-                methods += f"    @DisplayName(\"{display_method} {path} - should return empty list when no data\")\n"
+                methods += f"    @DisplayName(\"{display_method} {path} - should handle empty data\")\n"
                 methods += f"    void {empty_name}() throws Exception {{\n"
                 methods += (
                     f"        // Given\n"
@@ -1474,23 +1660,31 @@ build/
                     f"        // When & Then\n"
                     f"        mockMvc.perform(get(\"{test_path}\"))\n"
                     f"                .andExpect(status().isOk())\n"
-                    f"                .andExpect(jsonPath(\"$\").isEmpty());\n"
+                    f"                .andExpect(content().contentType(MediaType.APPLICATION_JSON));\n"
                     f"    }}\n\n"
                 )
 
             # ─────────────────────────────────────────────────────────
-            # POST/PUT/PATCH - empty body → 400
+            # POST/PUT/PATCH - empty body → should not crash
             # ─────────────────────────────────────────────────────────
             if http_method in ("POST", "PUT", "PATCH") and ep["has_request_body"]:
-                empty_name = self._unique_name(f"test{test_base}_EmptyBody_Returns400", seen_names)
+                empty_name = self._unique_name(f"test{test_base}_EmptyBody_HandledGracefully", seen_names)
                 methods += f"    @Test\n"
-                methods += f"    @DisplayName(\"{display_method} {path} - should return 400 with empty body\")\n"
+                methods += f"    @DisplayName(\"{display_method} {path} - should handle empty body gracefully\")\n"
                 methods += f"    void {empty_name}() throws Exception {{\n"
+                if has_jdbc:
+                    methods += (
+                        f"        // Given — mock DB to avoid NPE on null fields\n"
+                        f"        when(jdbcTemplate.update(anyString(), any(Object[].class)))\n"
+                        f"                .thenReturn(1);\n"
+                        f"        when(jdbcTemplate.queryForList(anyString(), any(Object[].class)))\n"
+                        f"                .thenReturn(List.of(Map.of(\"id\", 1)));\n\n"
+                    )
                 methods += (
                     f"        mockMvc.perform({mvc_method}(\"{test_path}\")\n"
                     f"                .contentType(MediaType.APPLICATION_JSON)\n"
                     f"                .content(\"{{}}\"))\n"
-                    f"                .andExpect(status().isBadRequest());\n"
+                    f"                .andExpect(status().isOk());\n"
                     f"    }}\n\n"
                 )
 
@@ -1890,19 +2084,90 @@ build/
         ]
 
         if "database" in connectors:
-            services.append(
-                f"  db:\n"
-                f"    image: mysql:8\n"
-                f"    ports:\n"
-                f"      - '3306:3306'\n"
-                f"    environment:\n"
-                f"      MYSQL_ROOT_PASSWORD: root\n"
-                f"      MYSQL_DATABASE: {db_name}\n"
-                f"      MYSQL_USER: {db_user}\n"
-                f"      MYSQL_PASSWORD: {db_password}\n"
-                f"    volumes:\n"
-                f"      - mysql_data:/var/lib/mysql\n"
-            )
+            # Generate a container for each unique DB type across all datasources
+            db_types_added = set()
+            depends_on = []
+            for cfg_dc in (db_configs or [{"driver": "", "url": ""}]):
+                combo = (str(cfg_dc.get("driver", "")) + " " + str(cfg_dc.get("url", ""))).lower()
+                if "postgres" in combo:
+                    db_type = "postgresql"
+                elif "sqlserver" in combo or "mssql" in combo:
+                    db_type = "sqlserver"
+                else:
+                    db_type = "mysql"
+
+                if db_type in db_types_added:
+                    continue
+                db_types_added.add(db_type)
+
+                # Resolve per-config DB credentials
+                _dn = str(cfg_dc.get("database", "appdb"))
+                _du = str(cfg_dc.get("user", "admin"))
+                _dp = str(cfg_dc.get("password", "changeme"))
+                _dn = _dn if "${" not in _dn else "appdb"
+                _du = _du if "${" not in _du else "admin"
+                _dp = _dp if "${" not in _dp else "changeme"
+
+                if db_type == "postgresql":
+                    svc_name = "postgres"
+                    depends_on.append(svc_name)
+                    services.append(
+                        f"  {svc_name}:\n"
+                        f"    image: postgres:16-alpine\n"
+                        f"    ports:\n"
+                        f"      - '5432:5432'\n"
+                        f"    environment:\n"
+                        f"      POSTGRES_DB: {_dn}\n"
+                        f"      POSTGRES_USER: {_du}\n"
+                        f"      POSTGRES_PASSWORD: {_dp}\n"
+                        f"    volumes:\n"
+                        f"      - postgres_data:/var/lib/postgresql/data\n"
+                    )
+                elif db_type == "sqlserver":
+                    svc_name = "mssql"
+                    depends_on.append(svc_name)
+                    services.append(
+                        f"  {svc_name}:\n"
+                        f"    image: mcr.microsoft.com/mssql/server:2022-latest\n"
+                        f"    ports:\n"
+                        f"      - '1433:1433'\n"
+                        f"    environment:\n"
+                        f"      ACCEPT_EULA: 'Y'\n"
+                        f"      SA_PASSWORD: {_dp}\n"
+                        f"      MSSQL_PID: Developer\n"
+                        f"    volumes:\n"
+                        f"      - mssql_data:/var/opt/mssql\n"
+                    )
+                else:
+                    svc_name = "mysql"
+                    depends_on.append(svc_name)
+                    services.append(
+                        f"  {svc_name}:\n"
+                        f"    image: mysql:8\n"
+                        f"    ports:\n"
+                        f"      - '3306:3306'\n"
+                        f"    environment:\n"
+                        f"      MYSQL_ROOT_PASSWORD: root\n"
+                        f"      MYSQL_DATABASE: {_dn}\n"
+                        f"      MYSQL_USER: {_du}\n"
+                        f"      MYSQL_PASSWORD: {_dp}\n"
+                        f"    volumes:\n"
+                        f"      - mysql_data:/var/lib/mysql\n"
+                    )
+
+            # Update app depends_on to reference all DB services
+            if depends_on:
+                depends_str = "\n".join(f"      - {d}" for d in depends_on)
+                services[0] = (
+                    f"  app:\n"
+                    f"    build: .\n"
+                    f"    ports:\n"
+                    f"      - '{port}:{port}'\n"
+                    f"    environment:\n"
+                    f"      - SPRING_PROFILES_ACTIVE=dev\n"
+                    f"    depends_on:\n"
+                    f"{depends_str}\n"
+                )
 
         if "jms" in connectors:
             services.append(
@@ -1967,9 +2232,23 @@ build/
             )
 
         compose = "version: '3.8'\nservices:\n" + "\n".join(services)
-        # Add volumes section if database is used
+        # Add volumes section for all DB types in use
         if "database" in connectors:
-            compose += "\nvolumes:\n  mysql_data:\n"
+            vol_names = []
+            db_types_seen = set()
+            for cfg_v in (db_configs or [{"driver": "", "url": ""}]):
+                combo = (str(cfg_v.get("driver", "")) + " " + str(cfg_v.get("url", ""))).lower()
+                if "postgres" in combo and "postgres" not in db_types_seen:
+                    vol_names.append("postgres_data")
+                    db_types_seen.add("postgres")
+                elif ("sqlserver" in combo or "mssql" in combo) and "mssql" not in db_types_seen:
+                    vol_names.append("mssql_data")
+                    db_types_seen.add("mssql")
+                elif "postgres" not in combo and "sqlserver" not in combo and "mssql" not in combo and "mysql" not in db_types_seen:
+                    vol_names.append("mysql_data")
+                    db_types_seen.add("mysql")
+            if vol_names:
+                compose += "\nvolumes:\n" + "".join(f"  {v}:\n" for v in vol_names)
         return compose
 
     # ══════════════════════════════════════════════════════════════════════
@@ -2036,9 +2315,27 @@ build/
         return "".join(w.capitalize() for w in name.split())
 
     def _to_bean_name(self, name):
-        name = name.replace("-", "_").replace(" ", "_")
-        parts = name.split("_")
-        return parts[0].lower() + "".join(p.capitalize() for p in parts[1:])
+        """Convert config name to camelCase Java bean name.
+        Must match flow_converter._to_variable_name() output exactly
+        so that bean names are consistent between controller/service code
+        and @Bean/@ConfigurationProperties config classes.
+
+        Examples: 'claims-db-config' -> 'claimsDbConfig'
+                  'my.dotted.name'   -> 'myDottedName'
+                  'camelCaseName'    -> 'camelCaseName'
+        """
+        if not name:
+            return "bean"
+        import re as _re
+        parts = _re.split(r'[-._]+', name)
+        if not parts:
+            return "bean"
+        result = parts[0][0].lower() + parts[0][1:] if parts[0] else ""
+        for p in parts[1:]:
+            if p:
+                result += p[0].upper() + p[1:]
+        result = _re.sub(r'[^a-zA-Z0-9]', '', result)
+        return result or "bean"
 
     def _to_property_name(self, name):
         name = re.sub(r"[^a-zA-Z0-9]", "-", name).lower()

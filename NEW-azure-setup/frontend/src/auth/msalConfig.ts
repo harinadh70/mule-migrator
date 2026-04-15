@@ -1,95 +1,116 @@
-import { PublicClientApplication, Configuration, LogLevel } from "@azure/msal-browser";
+import { PublicClientApplication, LogLevel } from "@azure/msal-browser";
 
 const clientId = import.meta.env.VITE_AZURE_AD_CLIENT_ID || "";
 const tenantId = import.meta.env.VITE_AZURE_AD_TENANT_ID || "";
-const redirectUri = import.meta.env.VITE_AZURE_AD_REDIRECT_URI || window.location.origin + "/";
+const redirectUri =
+  import.meta.env.VITE_AZURE_AD_REDIRECT_URI || window.location.origin + "/";
 
 export const isAzureAdEnabled = !!(clientId && tenantId);
 
-const msalConfig: Configuration = {
+export const msalInstance = new PublicClientApplication({
   auth: {
     clientId,
-    authority: `https://login.microsoftonline.com/${tenantId}`,
+    authority: "https://login.microsoftonline.com/common",
     redirectUri,
-    postLogoutRedirectUri: redirectUri,
+    navigateToLoginRequestUrl: false,
   },
   cache: {
     cacheLocation: "localStorage",
-    storeAuthStateInCookie: false,
+    storeAuthStateInCookie: true,
   },
   system: {
     loggerOptions: {
-      logLevel: LogLevel.Warning,
+      logLevel: LogLevel.Error,
+      loggerCallback: (_level, message, containsPii) => {
+        if (!containsPii) console.error("[MSAL]", message);
+      },
     },
+    allowNativeBroker: false,
   },
-};
+});
 
-export const msalInstance = new PublicClientApplication(msalConfig);
+export const loginScopes = ["openid", "profile", "email"];
 
-export const loginRequest = {
-  scopes: [`api://${clientId}/api.access`],
-};
+/**
+ * Scopes for calling the backend Function App API.
+ * Uses the app registration's client ID as the API audience.
+ */
+const apiScope = clientId ? `api://${clientId}/.default` : "";
 
-export async function initializeMsal() {
-  await msalInstance.initialize();
-  const response = await msalInstance.handleRedirectPromise();
-  if (response) {
-    msalInstance.setActiveAccount(response.account);
-  }
-  const accounts = msalInstance.getAllAccounts();
-  if (accounts.length > 0) {
-    msalInstance.setActiveAccount(accounts[0]);
-  }
-}
+/**
+ * Acquire an access token for the backend API (silent, then redirect fallback).
+ * Returns the raw JWT access token string, or null if unavailable.
+ */
+export async function getApiAccessToken(): Promise<string | null> {
+  if (!apiScope) return null;
 
-export async function getApiToken(): Promise<string | null> {
-  if (!isAzureAdEnabled) return null;
   const account = msalInstance.getActiveAccount();
   if (!account) return null;
+
   try {
-    const result = await msalInstance.acquireTokenSilent({
-      ...loginRequest,
+    const response = await msalInstance.acquireTokenSilent({
+      scopes: [apiScope],
       account,
     });
-    return result.accessToken;
+    return response.accessToken;
   } catch {
+    // Silent failed (expired, consent needed) — try interactive redirect
     try {
-      const result = await msalInstance.acquireTokenPopup(loginRequest);
-      return result.accessToken;
-    } catch {
-      return null;
+      await msalInstance.acquireTokenRedirect({ scopes: [apiScope] });
+    } catch (err) {
+      console.error("[MSAL] acquireTokenRedirect failed:", err);
     }
+    return null;
   }
 }
 
-export function getActiveUser() {
+/**
+ * Initialize MSAL and handle any redirect response.
+ * Must be called ONCE before rendering the app.
+ * Returns the authenticated user or null.
+ */
+export async function initAndHandleRedirect(): Promise<{
+  id: string;
+  email: string;
+  name: string;
+} | null> {
+  await msalInstance.initialize();
+
+  // This processes the auth response if we're returning from a redirect
+  const response = await msalInstance.handleRedirectPromise();
+
+  if (response?.account) {
+    msalInstance.setActiveAccount(response.account);
+  }
+
+  // Check cache for existing account
+  if (!msalInstance.getActiveAccount()) {
+    const accounts = msalInstance.getAllAccounts();
+    if (accounts.length > 0) {
+      msalInstance.setActiveAccount(accounts[0]);
+    }
+  }
+
   const account = msalInstance.getActiveAccount();
   if (!account) return null;
+
   return {
-    name: account.name || account.username,
-    email: account.username,
     id: account.localAccountId,
+    email: account.username,
+    name: account.name || account.username,
   };
 }
 
-export async function login() {
-  try {
-    const result = await msalInstance.loginPopup(loginRequest);
-    if (result.account) {
-      msalInstance.setActiveAccount(result.account);
-    }
-    return result;
-  } catch (err) {
-    console.error("Login failed:", err);
-    // Fallback to redirect
-    await msalInstance.loginRedirect(loginRequest);
-  }
+/**
+ * Redirect to Microsoft login page (same tab, no popup).
+ */
+export function loginWithMicrosoft(): void {
+  msalInstance.loginRedirect({
+    scopes: loginScopes,
+    prompt: "select_account",
+  });
 }
 
-export async function logout() {
-  try {
-    await msalInstance.logoutPopup();
-  } catch {
-    await msalInstance.logoutRedirect();
-  }
+export function logout(): void {
+  msalInstance.logoutRedirect({ postLogoutRedirectUri: redirectUri });
 }

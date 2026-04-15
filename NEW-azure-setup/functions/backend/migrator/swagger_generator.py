@@ -40,7 +40,7 @@ def generate_from_parsed_xml(parsed_data, project_name="migrated-app"):
     tag_set = set()
 
     for flow in flows:
-        source = flow.get("source", {})
+        source = flow.get("source") or {}
         source_type = source.get("type", "")
 
         # Only process HTTP listener flows
@@ -283,18 +283,24 @@ def generate_from_raml(raml_content):
                 for type_name, type_def in item.items():
                     spec["components"]["schemas"][type_name] = _raml_type_to_schema(type_def)
 
+    # Root-level mediaType (used as default for shorthand body definitions)
+    root_media_type = raml.get("mediaType", "application/json")
+
     # Convert resources (top-level keys starting with /)
     tag_set = set()
     for key, value in raml.items():
         if isinstance(key, str) and key.startswith('/') and isinstance(value, dict):
-            _convert_raml_resource(key, value, spec["paths"], spec["components"]["schemas"], tag_set)
+            _convert_raml_resource(key, value, spec["paths"],
+                                   spec["components"]["schemas"], tag_set,
+                                   root_media_type=root_media_type)
 
     spec["tags"] = [{"name": t, "description": f"{t} operations"} for t in sorted(tag_set)]
 
     return spec
 
 
-def _convert_raml_resource(path, resource, paths, schemas, tag_set, parent_params=None):
+def _convert_raml_resource(path, resource, paths, schemas, tag_set,
+                           parent_params=None, root_media_type="application/json"):
     """Recursively convert a RAML resource to OpenAPI paths."""
     http_methods = {"get", "post", "put", "patch", "delete", "head", "options"}
     uri_params = resource.get("uriParameters", {})
@@ -314,7 +320,9 @@ def _convert_raml_resource(path, resource, paths, schemas, tag_set, parent_param
             method_def = {}
 
         operation = {
-            "summary": method_def.get("description", f"{method.upper()} {path}"),
+            "summary": method_def.get("displayName",
+                       method_def.get("description", f"{method.upper()} {path}")),
+            "description": method_def.get("description", ""),
             "operationId": _path_to_operation_id(method, path),
             "tags": [tag],
             "responses": {},
@@ -325,12 +333,14 @@ def _convert_raml_resource(path, resource, paths, schemas, tag_set, parent_param
         path_params = re.findall(r'\{(\w+)\}', openapi_path)
         for p in path_params:
             p_def = all_params.get(p, {})
+            if not isinstance(p_def, dict):
+                p_def = {"type": str(p_def)} if p_def else {}
             params.append({
                 "name": p,
                 "in": "path",
                 "required": True,
                 "schema": {"type": _raml_type_str(p_def.get("type", "string"))},
-                "description": p_def.get("description", ""),
+                "description": p_def.get("description", f"The {p} identifier"),
             })
 
         query_params = method_def.get("queryParameters", {})
@@ -351,16 +361,8 @@ def _convert_raml_resource(path, resource, paths, schemas, tag_set, parent_param
 
         # Request body
         body = method_def.get("body", {})
-        if body and method in ("post", "put", "patch"):
-            content = {}
-            for mime, mime_def in body.items():
-                if not isinstance(mime_def, dict):
-                    mime_def = {}
-                schema_ref = mime_def.get("type", mime_def.get("schema", "object"))
-                if isinstance(schema_ref, str) and schema_ref in schemas:
-                    content[mime] = {"schema": {"$ref": f"#/components/schemas/{schema_ref}"}}
-                else:
-                    content[mime] = {"schema": {"type": "object"}}
+        if body and isinstance(body, dict) and method in ("post", "put", "patch"):
+            content = _resolve_raml_body(body, schemas, root_media_type)
             if content:
                 operation["requestBody"] = {"required": True, "content": content}
 
@@ -374,15 +376,7 @@ def _convert_raml_resource(path, resource, paths, schemas, tag_set, parent_param
                 resp = {"description": resp_def.get("description", f"Status {status_str}")}
                 resp_body = resp_def.get("body", {})
                 if resp_body and isinstance(resp_body, dict):
-                    resp_content = {}
-                    for mime, mime_def in resp_body.items():
-                        if not isinstance(mime_def, dict):
-                            mime_def = {}
-                        type_ref = mime_def.get("type", mime_def.get("schema", "object"))
-                        if isinstance(type_ref, str) and type_ref in schemas:
-                            resp_content[mime] = {"schema": {"$ref": f"#/components/schemas/{type_ref}"}}
-                        else:
-                            resp_content[mime] = {"schema": {"type": "object"}}
+                    resp_content = _resolve_raml_body(resp_body, schemas, root_media_type)
                     if resp_content:
                         resp["content"] = resp_content
                 operation["responses"][status_str] = resp
@@ -396,7 +390,49 @@ def _convert_raml_resource(path, resource, paths, schemas, tag_set, parent_param
     # Nested resources
     for key, value in resource.items():
         if isinstance(key, str) and key.startswith('/') and isinstance(value, dict):
-            _convert_raml_resource(path + key, value, paths, schemas, tag_set, all_params)
+            _convert_raml_resource(path + key, value, paths, schemas, tag_set,
+                                   all_params, root_media_type)
+
+
+def _resolve_raml_body(body, schemas, default_media_type="application/json"):
+    """Resolve a RAML body definition to OpenAPI content map.
+
+    Handles two RAML body formats:
+    1. Shorthand (when root mediaType is set):
+       ``body: {type: Policy}`` or ``body: {type: Policy, example: ...}``
+    2. Explicit media type keys:
+       ``body: {application/json: {type: Policy}}``
+    """
+    if not isinstance(body, dict):
+        return {}
+
+    # Detect shorthand format: body has 'type' key but no media-type keys
+    media_type_keys = [k for k in body if isinstance(k, str) and '/' in k]
+    has_type_key = "type" in body
+
+    if has_type_key and not media_type_keys:
+        # Shorthand: body IS the schema definition, use root mediaType
+        type_ref = body.get("type", "object")
+        if isinstance(type_ref, str) and type_ref in schemas:
+            return {default_media_type: {
+                "schema": {"$ref": f"#/components/schemas/{type_ref}"}
+            }}
+        else:
+            return {default_media_type: {"schema": {"type": "object"}}}
+
+    # Explicit media type keys
+    content = {}
+    for mime, mime_def in body.items():
+        if not isinstance(mime, str) or '/' not in mime:
+            continue  # skip non-media-type keys
+        if not isinstance(mime_def, dict):
+            mime_def = {}
+        schema_ref = mime_def.get("type", mime_def.get("schema", "object"))
+        if isinstance(schema_ref, str) and schema_ref in schemas:
+            content[mime] = {"schema": {"$ref": f"#/components/schemas/{schema_ref}"}}
+        else:
+            content[mime] = {"schema": {"type": "object"}}
+    return content
 
 
 def _raml_type_to_schema(type_def):

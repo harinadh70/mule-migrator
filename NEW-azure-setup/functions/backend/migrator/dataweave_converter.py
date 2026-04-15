@@ -175,15 +175,24 @@ class DataWeaveConverter:
         expr = re.sub(r"\$\.(\w+)", r'item.get("\1")', expr)
         expr = re.sub(r"\$\$", "index", expr)  # $$ = index in DW
 
+        # ── p() function (MuleSoft property lookup) ──────────────────
+        # p('key') → environment.getProperty("key")
+        expr = re.sub(r"p\('([^']+)'\)", r'environment.getProperty("\1")', expr)
+        expr = re.sub(r'p\("([^"]+)"\)', r'environment.getProperty("\1")', expr)
+
         # ── payload / attributes / vars references ────────────────────
-        # payload.field.subField → payload.get("field").get("subField")
+        # payload."key" → ((Map<String,Object>)payload).get("key")  (DW quoted key access)
+        expr = re.sub(r'\bpayload\."(\w+)"', r'((Map<String,Object>)payload).get("\1")', expr)
+        # payload[N] → ((List<?>)payload).get(N)
+        expr = re.sub(r"\bpayload\[(\d+)\]", r"((List<?>)payload).get(\1)", expr)
+        # payload.field.subField → ((Map<String,Object>)payload.get("field")).get("subField")
         expr = re.sub(
             r"\bpayload\.(\w+)\.(\w+)",
             lambda m: f'((Map<String,Object>)payload.get("{m.group(1)}")).get("{m.group(2)}")',
             expr,
         )
         expr = re.sub(r"\bpayload\.(\w+)", r'payload.get("\1")', expr)
-        expr = re.sub(r"\bpayload\b(?!\.)", "payload", expr)
+        expr = re.sub(r"\bpayload\b(?![\.\[\"])", "payload", expr)
 
         # attributes.queryParams.x → queryParams.get("x")
         expr = re.sub(r"\battributes\.queryParams\.(\w+)", r'queryParams.get("\1")', expr)
@@ -310,6 +319,9 @@ class DataWeaveConverter:
                        r"(\1 == null || String.valueOf(\1).isBlank())", expr)
 
         # ── Type coercion ─────────────────────────────────────────────
+        # as String {format: "pattern"} → formatted conversion
+        expr = re.sub(r'(\w[\w.()]*)\s+as\s+String\s*\{\s*format:\s*"([^"]+)"\s*\}',
+                       r'DateTimeFormatter.ofPattern("\2").format(\1)', expr)
         expr = re.sub(r"(\w[\w.()]*)\s+as\s+String", r"String.valueOf(\1)", expr)
         expr = re.sub(r"(\w[\w.()]*)\s+as\s+Number", r"Double.parseDouble(String.valueOf(\1))", expr)
         expr = re.sub(r"(\w[\w.()]*)\s+as\s+Boolean", r"Boolean.parseBoolean(String.valueOf(\1))", expr)
@@ -323,6 +335,9 @@ class DataWeaveConverter:
                        r"LocalDateTime.parse(String.valueOf(\1))", expr)
         expr = re.sub(r"(\w[\w.()]*)\s+as\s+LocalDateTime",
                        r"LocalDateTime.parse(String.valueOf(\1))", expr)
+
+        # Clean up stray {format: ...} blocks that weren't caught above
+        expr = re.sub(r'\s*\{format:\s*"[^"]+"\s*\}', '', expr)
 
         if "LocalDate" in expr:
             self.imports_needed.add("java.time.LocalDate")
@@ -479,7 +494,8 @@ class DataWeaveConverter:
             java_val = self._convert_expression(value)
             java_lines.append(f'result.put("{key}", {java_val});')
 
-        java_lines.append("return result;")
+        # NOTE: Do NOT emit "return result;" here — the caller
+        # (flow_converter) handles the assignment to payload/transformed.
         return "\n".join(java_lines)
 
     # ── Array literal [ … ] ───────────────────────────────────────────────

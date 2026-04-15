@@ -10167,6 +10167,3431 @@ Key mapping rules:
 - Use STOMP protocol with SockJS for browser compatibility.
 - Enable with @EnableWebSocketMessageBroker.""",
     },
+
+    # ==================================================================
+    #  10. Database Migration Patterns (15 docs)
+    # ==================================================================
+    {
+        "title": "Database Select to JPA Repository",
+        "category": "database",
+        "content": """MuleSoft db:select -> Spring Data JPA Repository
+
+MuleSoft XML:
+```xml
+<db:select config-ref="Database_Config">
+    <db:sql>SELECT * FROM orders WHERE status = :status</db:sql>
+    <db:input-parameters>#[{ 'status': attributes.queryParams.status }]</db:input-parameters>
+</db:select>
+```
+
+Spring Boot Java:
+```java
+@Repository
+public interface OrderRepository extends JpaRepository<Order, Long> {
+    List<Order> findByStatus(String status);
+
+    @Query("SELECT o FROM Order o WHERE o.status = :status AND o.createdAt > :since")
+    List<Order> findRecentByStatus(@Param("status") String status, @Param("since") LocalDateTime since);
+}
+
+@Service
+public class OrderService {
+    private final OrderRepository orderRepository;
+
+    public OrderService(OrderRepository orderRepository) {
+        this.orderRepository = orderRepository;
+    }
+
+    public List<Order> getOrdersByStatus(String status) {
+        return orderRepository.findByStatus(status);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft db:select with named parameters becomes Spring Data JPA derived query methods.
+- Complex SQL uses @Query annotation with JPQL.
+- Input parameters map to @Param annotated method parameters.
+- Always use parameterized queries, never string concatenation.
+- Create an @Entity class for each database table.""",
+    },
+    {
+        "title": "Database Insert to JPA Save",
+        "category": "database",
+        "content": """MuleSoft db:insert -> Spring Data JPA save()
+
+MuleSoft XML:
+```xml
+<db:insert config-ref="Database_Config">
+    <db:sql>INSERT INTO customers (name, email, phone) VALUES (:name, :email, :phone)</db:sql>
+    <db:input-parameters>#[{
+        'name': payload.name,
+        'email': payload.email,
+        'phone': payload.phone
+    }]</db:input-parameters>
+</db:insert>
+```
+
+Spring Boot Java:
+```java
+@Entity
+@Table(name = "customers")
+public class Customer {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String name;
+
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    private String phone;
+
+    // getters and setters
+}
+
+@Service
+public class CustomerService {
+    private final CustomerRepository customerRepository;
+
+    public Customer createCustomer(CustomerCreateRequest request) {
+        Customer customer = new Customer();
+        customer.setName(request.getName());
+        customer.setEmail(request.getEmail());
+        customer.setPhone(request.getPhone());
+        return customerRepository.save(customer);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft db:insert becomes repository.save(entity).
+- Map SQL columns to @Entity fields with @Column annotations.
+- Use @GeneratedValue for auto-increment primary keys.
+- Input parameters from payload map to DTO/request object fields.
+- Always validate input before saving.""",
+    },
+    {
+        "title": "Database Update to JPA Save",
+        "category": "database",
+        "content": """MuleSoft db:update -> Spring Data JPA save() or @Modifying @Query
+
+MuleSoft XML:
+```xml
+<db:update config-ref="Database_Config">
+    <db:sql>UPDATE orders SET status = :status, updated_at = NOW() WHERE id = :id</db:sql>
+    <db:input-parameters>#[{ 'status': 'SHIPPED', 'id': payload.orderId }]</db:input-parameters>
+</db:update>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class OrderService {
+    private final OrderRepository orderRepository;
+
+    @Transactional
+    public Order updateOrderStatus(Long orderId, String status) {
+        Order order = orderRepository.findById(orderId)
+            .orElseThrow(() -> new ResourceNotFoundException("Order not found: " + orderId));
+        order.setStatus(status);
+        order.setUpdatedAt(LocalDateTime.now());
+        return orderRepository.save(order);
+    }
+}
+
+// For bulk updates, use @Modifying:
+@Repository
+public interface OrderRepository extends JpaRepository<Order, Long> {
+    @Modifying
+    @Transactional
+    @Query("UPDATE Order o SET o.status = :status WHERE o.createdAt < :before")
+    int updateOldOrdersStatus(@Param("status") String status, @Param("before") LocalDateTime before);
+}
+```
+
+Key mapping rules:
+- MuleSoft db:update with single record becomes findById + modify + save.
+- Bulk updates use @Modifying @Query.
+- Always wrap in @Transactional.
+- Add optimistic locking with @Version for concurrent updates.""",
+    },
+    {
+        "title": "Database Delete to JPA Delete",
+        "category": "database",
+        "content": """MuleSoft db:delete -> Spring Data JPA deleteById/delete
+
+MuleSoft XML:
+```xml
+<db:delete config-ref="Database_Config">
+    <db:sql>DELETE FROM audit_logs WHERE created_at < :cutoff</db:sql>
+    <db:input-parameters>#[{ 'cutoff': vars.cutoffDate }]</db:input-parameters>
+</db:delete>
+```
+
+Spring Boot Java:
+```java
+@Repository
+public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM AuditLog a WHERE a.createdAt < :cutoff")
+    int deleteOldLogs(@Param("cutoff") LocalDateTime cutoff);
+
+    void deleteByCreatedAtBefore(LocalDateTime cutoff);
+}
+
+@Service
+public class AuditService {
+    @Transactional
+    public int cleanupOldLogs(int daysToKeep) {
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(daysToKeep);
+        return auditLogRepository.deleteOldLogs(cutoff);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft db:delete with WHERE clause becomes @Modifying @Query or derived delete method.
+- Single record delete becomes repository.deleteById(id).
+- Always use @Transactional for delete operations.
+- Consider soft deletes (@SQLDelete) for audit trails.""",
+    },
+    {
+        "title": "Database Stored Procedure Call",
+        "category": "database",
+        "content": """MuleSoft db:stored-procedure -> Spring Data JPA @Procedure
+
+MuleSoft XML:
+```xml
+<db:stored-procedure config-ref="Database_Config">
+    <db:sql>CALL calculate_monthly_totals(:year, :month)</db:sql>
+    <db:input-parameters>#[{
+        'year': now().year,
+        'month': now().month
+    }]</db:input-parameters>
+</db:stored-procedure>
+```
+
+Spring Boot Java:
+```java
+@Repository
+public interface ReportRepository extends JpaRepository<Report, Long> {
+    @Procedure(name = "calculate_monthly_totals")
+    void calculateMonthlyTotals(@Param("year") int year, @Param("month") int month);
+}
+
+// Alternative using JdbcTemplate for complex procedures:
+@Repository
+public class ReportJdbcRepository {
+    private final JdbcTemplate jdbcTemplate;
+
+    public Map<String, Object> callCalculateTotals(int year, int month) {
+        SimpleJdbcCall jdbcCall = new SimpleJdbcCall(jdbcTemplate)
+            .withProcedureName("calculate_monthly_totals");
+        SqlParameterSource params = new MapSqlParameterSource()
+            .addValue("year", year)
+            .addValue("month", month);
+        return jdbcCall.execute(params);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft db:stored-procedure maps to @Procedure or SimpleJdbcCall.
+- Simple procedures use @Procedure annotation.
+- Complex procedures with multiple result sets use JdbcTemplate.
+- OUT parameters map to method return types.""",
+    },
+    {
+        "title": "Database Connection Pool Configuration",
+        "category": "database",
+        "content": """MuleSoft db:config -> Spring Boot HikariCP DataSource
+
+MuleSoft XML:
+```xml
+<db:config name="Database_Config">
+    <db:my-sql-connection host="${db.host}" port="${db.port}"
+        database="${db.name}" user="${db.user}" password="${db.password}">
+        <db:pooling-profile maxPoolSize="20" minPoolSize="5"
+            acquireIncrement="3" maxWait="30" maxWaitUnit="SECONDS"/>
+    </db:my-sql-connection>
+</db:config>
+```
+
+Spring Boot application.yml:
+```yaml
+spring:
+  datasource:
+    url: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 30000
+      connection-timeout: 30000
+      max-lifetime: 1800000
+      pool-name: MuleMigratedPool
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.MySQLDialect
+```
+
+Key mapping rules:
+- MuleSoft db:config connection properties map to spring.datasource.
+- Pool settings map to spring.datasource.hikari.
+- maxPoolSize -> maximum-pool-size, minPoolSize -> minimum-idle.
+- Use environment variables for sensitive values.
+- Set ddl-auto to 'validate' in production.""",
+    },
+    {
+        "title": "Database Transaction Management",
+        "category": "database",
+        "content": """MuleSoft try scope with transactions -> Spring @Transactional
+
+MuleSoft XML:
+```xml
+<flow name="transferFundsFlow">
+    <try transactionalAction="ALWAYS_BEGIN">
+        <db:update config-ref="Database_Config">
+            <db:sql>UPDATE accounts SET balance = balance - :amount WHERE id = :fromId</db:sql>
+        </db:update>
+        <db:update config-ref="Database_Config">
+            <db:sql>UPDATE accounts SET balance = balance + :amount WHERE id = :toId</db:sql>
+        </db:update>
+        <error-handler>
+            <on-error-propagate type="ANY">
+                <logger level="ERROR" message="Transfer failed, rolling back"/>
+            </on-error-propagate>
+        </error-handler>
+    </try>
+</flow>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class AccountService {
+    private final AccountRepository accountRepository;
+
+    @Transactional(rollbackFor = Exception.class)
+    public void transferFunds(Long fromId, Long toId, BigDecimal amount) {
+        Account from = accountRepository.findById(fromId)
+            .orElseThrow(() -> new ResourceNotFoundException("Account not found: " + fromId));
+        Account to = accountRepository.findById(toId)
+            .orElseThrow(() -> new ResourceNotFoundException("Account not found: " + toId));
+
+        if (from.getBalance().compareTo(amount) < 0) {
+            throw new InsufficientFundsException("Insufficient balance");
+        }
+
+        from.setBalance(from.getBalance().subtract(amount));
+        to.setBalance(to.getBalance().add(amount));
+
+        accountRepository.save(from);
+        accountRepository.save(to);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft try with transactionalAction="ALWAYS_BEGIN" becomes @Transactional.
+- on-error-propagate maps to rollbackFor = Exception.class.
+- on-error-continue maps to noRollbackFor.
+- Use @Transactional(readOnly = true) for read-only operations.
+- Propagation.REQUIRES_NEW for independent transactions.""",
+    },
+    {
+        "title": "Database Pagination Pattern",
+        "category": "database",
+        "content": """MuleSoft db:select with LIMIT/OFFSET -> Spring Data Pageable
+
+MuleSoft XML:
+```xml
+<db:select config-ref="Database_Config">
+    <db:sql>SELECT * FROM products ORDER BY name LIMIT :limit OFFSET :offset</db:sql>
+    <db:input-parameters>#[{
+        'limit': attributes.queryParams.pageSize default 20,
+        'offset': (attributes.queryParams.page default 0) * (attributes.queryParams.pageSize default 20)
+    }]</db:input-parameters>
+</db:select>
+```
+
+Spring Boot Java:
+```java
+@RestController
+@RequestMapping("/api/products")
+public class ProductController {
+    private final ProductRepository productRepository;
+
+    @GetMapping
+    public ResponseEntity<Page<Product>> getProducts(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "name") String sortBy) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(sortBy));
+        Page<Product> products = productRepository.findAll(pageable);
+        return ResponseEntity.ok(products);
+    }
+}
+
+@Repository
+public interface ProductRepository extends JpaRepository<Product, Long> {
+    Page<Product> findByCategory(String category, Pageable pageable);
+}
+```
+
+Key mapping rules:
+- MuleSoft LIMIT/OFFSET pagination becomes Spring Data Pageable.
+- PageRequest.of(page, size, sort) replaces manual offset calculation.
+- Repository methods accept Pageable parameter for automatic pagination.
+- Response includes total count, pages, and navigation metadata.""",
+    },
+    {
+        "title": "Database Batch Operations",
+        "category": "database",
+        "content": """MuleSoft batch:job -> Spring Batch or JPA saveAll
+
+MuleSoft XML:
+```xml
+<batch:job name="importCustomersBatch">
+    <batch:process-records>
+        <batch:step name="insertStep">
+            <db:insert config-ref="Database_Config">
+                <db:sql>INSERT INTO customers (name, email) VALUES (:name, :email)</db:sql>
+                <db:input-parameters>#[{ 'name': payload.name, 'email': payload.email }]</db:input-parameters>
+            </db:insert>
+        </batch:step>
+    </batch:process-records>
+</batch:job>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class CustomerBatchService {
+    private final CustomerRepository customerRepository;
+
+    @Transactional
+    public int importCustomers(List<CustomerImportRequest> requests) {
+        List<Customer> customers = requests.stream()
+            .map(req -> {
+                Customer c = new Customer();
+                c.setName(req.getName());
+                c.setEmail(req.getEmail());
+                return c;
+            })
+            .collect(Collectors.toList());
+
+        List<Customer> saved = customerRepository.saveAll(customers);
+        return saved.size();
+    }
+}
+
+// For large batches, use Spring Batch:
+@Configuration
+@EnableBatchProcessing
+public class CustomerImportBatchConfig {
+    @Bean
+    public Job importCustomersJob(JobRepository jobRepository,
+            Step importStep) {
+        return new JobBuilder("importCustomersJob", jobRepository)
+            .start(importStep)
+            .build();
+    }
+
+    @Bean
+    public Step importStep(JobRepository jobRepository,
+            PlatformTransactionManager txManager,
+            ItemReader<CustomerCsv> reader,
+            ItemProcessor<CustomerCsv, Customer> processor,
+            ItemWriter<Customer> writer) {
+        return new StepBuilder("importStep", jobRepository)
+            .<CustomerCsv, Customer>chunk(100, txManager)
+            .reader(reader)
+            .processor(processor)
+            .writer(writer)
+            .build();
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft batch:job with simple inserts becomes JPA saveAll().
+- Complex batch processing with large datasets uses Spring Batch.
+- batch:step maps to Spring Batch Step with chunk processing.
+- Set chunk size (100-500) for optimal batch performance.
+- Use @Transactional for small batches, Spring Batch for millions of records.""",
+    },
+    {
+        "title": "Native SQL Query Mapping",
+        "category": "database",
+        "content": """MuleSoft complex SQL -> Spring Data @Query(nativeQuery=true)
+
+MuleSoft XML:
+```xml
+<db:select config-ref="Database_Config">
+    <db:sql><![CDATA[
+        SELECT c.name, COUNT(o.id) as order_count, SUM(o.total) as total_spent
+        FROM customers c
+        LEFT JOIN orders o ON c.id = o.customer_id
+        WHERE o.created_at BETWEEN :startDate AND :endDate
+        GROUP BY c.id, c.name
+        HAVING SUM(o.total) > :minSpend
+        ORDER BY total_spent DESC
+    ]]></db:sql>
+</db:select>
+```
+
+Spring Boot Java:
+```java
+@Repository
+public interface CustomerRepository extends JpaRepository<Customer, Long> {
+    @Query(value = "SELECT c.name, COUNT(o.id) as orderCount, SUM(o.total) as totalSpent "
+        + "FROM customers c LEFT JOIN orders o ON c.id = o.customer_id "
+        + "WHERE o.created_at BETWEEN :startDate AND :endDate "
+        + "GROUP BY c.id, c.name HAVING SUM(o.total) > :minSpend "
+        + "ORDER BY totalSpent DESC", nativeQuery = true)
+    List<CustomerSpendingProjection> findTopSpenders(
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        @Param("minSpend") BigDecimal minSpend
+    );
+}
+
+public interface CustomerSpendingProjection {
+    String getName();
+    Long getOrderCount();
+    BigDecimal getTotalSpent();
+}
+```
+
+Key mapping rules:
+- Complex MuleSoft SQL with JOINs/GROUP BY maps to @Query(nativeQuery = true).
+- Use interface projections for custom result shapes.
+- CDATA sections in MuleSoft map to Java text blocks.
+- Always use @Param for named parameters.""",
+    },
+    {
+        "title": "Multiple DataSource Configuration",
+        "category": "database",
+        "content": """MuleSoft multiple db:config -> Spring Boot multiple DataSources
+
+MuleSoft XML:
+```xml
+<db:config name="Primary_DB">
+    <db:my-sql-connection host="${primary.db.host}" database="${primary.db.name}"/>
+</db:config>
+<db:config name="Reporting_DB">
+    <db:generic-connection url="jdbc:postgresql://${reporting.db.host}/${reporting.db.name}"/>
+</db:config>
+```
+
+Spring Boot Java:
+```java
+@Configuration
+public class DataSourceConfig {
+    @Primary
+    @Bean
+    @ConfigurationProperties("spring.datasource.primary")
+    public DataSource primaryDataSource() {
+        return DataSourceBuilder.create().build();
+    }
+
+    @Bean
+    @ConfigurationProperties("spring.datasource.reporting")
+    public DataSource reportingDataSource() {
+        return DataSourceBuilder.create().build();
+    }
+
+    @Primary
+    @Bean
+    public LocalContainerEntityManagerFactoryBean primaryEntityManagerFactory(
+            @Qualifier("primaryDataSource") DataSource ds, EntityManagerFactoryBuilder builder) {
+        return builder.dataSource(ds)
+            .packages("com.example.domain.primary")
+            .persistenceUnit("primary")
+            .build();
+    }
+
+    @Bean
+    public LocalContainerEntityManagerFactoryBean reportingEntityManagerFactory(
+            @Qualifier("reportingDataSource") DataSource ds, EntityManagerFactoryBuilder builder) {
+        return builder.dataSource(ds)
+            .packages("com.example.domain.reporting")
+            .persistenceUnit("reporting")
+            .build();
+    }
+}
+```
+
+Key mapping rules:
+- Multiple MuleSoft db:config references become multiple @Bean DataSource definitions.
+- Use @Primary for the main database.
+- Separate entity packages per datasource.
+- Each datasource needs its own EntityManagerFactory and TransactionManager.""",
+    },
+    {
+        "title": "Database Migration with Flyway",
+        "category": "database",
+        "content": """MuleSoft database setup -> Spring Boot Flyway migration
+
+When migrating from MuleSoft, database schemas should be versioned using Flyway.
+
+Spring Boot setup:
+```yaml
+spring:
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+```
+
+```sql
+-- V1__create_initial_schema.sql
+CREATE TABLE customers (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    phone VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_customers_email ON customers(email);
+```
+
+```java
+// Entity matching the migration
+@Entity
+@Table(name = "customers")
+public class Customer {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String name;
+
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    private String phone;
+
+    @CreationTimestamp
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    private LocalDateTime updatedAt;
+}
+```
+
+Key mapping rules:
+- MuleSoft projects often have ad-hoc SQL; Spring Boot uses Flyway for versioned migrations.
+- Name files V1__, V2__, etc. for ordered execution.
+- Use hibernate.ddl-auto=validate with Flyway.
+- Add Flyway dependency: spring-boot-starter-data-jpa + flyway-core.""",
+    },
+    {
+        "title": "Redis Cache Integration",
+        "category": "database",
+        "content": """MuleSoft ObjectStore/Cache -> Spring Boot Redis Cache
+
+MuleSoft XML:
+```xml
+<os:object-store-config name="cacheStore" maxEntries="1000"
+    entryTtl="300" entryTtlUnit="SECONDS" expirationInterval="60"/>
+<os:store key="#[payload.id]" objectStore="cacheStore" value="#[payload]"/>
+<os:retrieve key="#[vars.cacheKey]" objectStore="cacheStore"/>
+```
+
+Spring Boot Java:
+```java
+@Configuration
+@EnableCaching
+public class CacheConfig {
+    @Bean
+    public RedisCacheManager cacheManager(RedisConnectionFactory factory) {
+        RedisCacheConfiguration config = RedisCacheConfiguration.defaultCacheConfig()
+            .entryTtl(Duration.ofMinutes(5))
+            .serializeValuesWith(
+                RedisSerializationContext.SerializationPair
+                    .fromSerializer(new GenericJackson2JsonRedisSerializer()));
+        return RedisCacheManager.builder(factory)
+            .cacheDefaults(config)
+            .build();
+    }
+}
+
+@Service
+public class ProductService {
+    @Cacheable(value = "products", key = "#id")
+    public Product getProduct(Long id) {
+        return productRepository.findById(id).orElseThrow();
+    }
+
+    @CachePut(value = "products", key = "#product.id")
+    public Product updateProduct(Product product) {
+        return productRepository.save(product);
+    }
+
+    @CacheEvict(value = "products", key = "#id")
+    public void deleteProduct(Long id) {
+        productRepository.deleteById(id);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft os:store maps to @Cacheable.
+- os:retrieve maps to cache lookup (automatic with @Cacheable).
+- os:remove maps to @CacheEvict.
+- entryTtl maps to RedisCacheConfiguration.entryTtl().
+- maxEntries managed by Redis eviction policy.""",
+    },
+    {
+        "title": "JPA Auditing for Entity Tracking",
+        "category": "database",
+        "content": """MuleSoft audit logging -> Spring Data JPA Auditing
+
+MuleSoft typically logs changes via custom flows. Spring Boot provides built-in JPA auditing.
+
+```java
+@Configuration
+@EnableJpaAuditing
+public class JpaAuditConfig {
+    @Bean
+    public AuditorAware<String> auditorProvider() {
+        return () -> Optional.ofNullable(SecurityContextHolder.getContext())
+            .map(ctx -> ctx.getAuthentication())
+            .map(auth -> auth.getName());
+    }
+}
+
+@MappedSuperclass
+@EntityListeners(AuditingEntityListener.class)
+public abstract class BaseEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @CreatedDate
+    @Column(updatable = false)
+    private LocalDateTime createdAt;
+
+    @LastModifiedDate
+    private LocalDateTime updatedAt;
+
+    @CreatedBy
+    @Column(updatable = false)
+    private String createdBy;
+
+    @LastModifiedBy
+    private String updatedBy;
+}
+
+@Entity
+public class Order extends BaseEntity {
+    private String orderNumber;
+    private String status;
+    private BigDecimal total;
+}
+```
+
+Key mapping rules:
+- MuleSoft custom audit flows become Spring JPA Auditing annotations.
+- @CreatedDate/@LastModifiedDate auto-populate timestamps.
+- @CreatedBy/@LastModifiedBy track the user from SecurityContext.
+- Extend a BaseEntity for consistent auditing across all entities.""",
+    },
+
+    # ==================================================================
+    #  11. Messaging & Events (15 docs)
+    # ==================================================================
+    {
+        "title": "JMS Queue Consumer",
+        "category": "messaging",
+        "content": """MuleSoft jms:listener -> Spring JMS @JmsListener
+
+MuleSoft XML:
+```xml
+<jms:config name="JMS_Config">
+    <jms:active-mq-connection/>
+</jms:config>
+<flow name="orderQueueListener">
+    <jms:listener config-ref="JMS_Config" destination="orders.queue"
+        ackMode="AUTO" numberOfConsumers="3"/>
+    <logger message="Received order: #[payload]"/>
+    <flow-ref name="processOrderSubFlow"/>
+</flow>
+```
+
+Spring Boot Java:
+```java
+@Component
+public class OrderMessageListener {
+    private static final Logger log = LoggerFactory.getLogger(OrderMessageListener.class);
+    private final OrderService orderService;
+
+    public OrderMessageListener(OrderService orderService) {
+        this.orderService = orderService;
+    }
+
+    @JmsListener(destination = "orders.queue", concurrency = "3")
+    public void onMessage(String message) {
+        log.info("Received order: {}", message);
+        OrderMessage order = objectMapper.readValue(message, OrderMessage.class);
+        orderService.processOrder(order);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft jms:listener maps to @JmsListener annotation.
+- destination attribute maps directly.
+- numberOfConsumers maps to concurrency attribute.
+- ackMode=AUTO is default in Spring JMS.
+- Configure via spring.jms.* properties.""",
+    },
+    {
+        "title": "JMS Queue Producer",
+        "category": "messaging",
+        "content": """MuleSoft jms:publish -> Spring JmsTemplate
+
+MuleSoft XML:
+```xml
+<jms:publish config-ref="JMS_Config" destination="notifications.queue">
+    <jms:message>
+        <jms:body>#[output application/json --- payload]</jms:body>
+        <jms:properties>#[{ 'priority': 'HIGH', 'type': 'ORDER_CONFIRMATION' }]</jms:properties>
+    </jms:message>
+</jms:publish>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class NotificationPublisher {
+    private final JmsTemplate jmsTemplate;
+
+    public NotificationPublisher(JmsTemplate jmsTemplate) {
+        this.jmsTemplate = jmsTemplate;
+    }
+
+    public void sendNotification(NotificationMessage notification) {
+        jmsTemplate.convertAndSend("notifications.queue", notification, message -> {
+            message.setStringProperty("priority", "HIGH");
+            message.setStringProperty("type", "ORDER_CONFIRMATION");
+            return message;
+        });
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft jms:publish maps to JmsTemplate.convertAndSend().
+- JMS properties set via MessagePostProcessor.
+- Message body serialization uses configured MessageConverter.
+- Add spring-boot-starter-activemq or spring-boot-starter-artemis dependency.""",
+    },
+    {
+        "title": "Kafka Consumer Pattern",
+        "category": "messaging",
+        "content": """MuleSoft kafka:consumer -> Spring Kafka @KafkaListener
+
+MuleSoft XML:
+```xml
+<kafka:consumer-config name="Kafka_Config">
+    <kafka:consumer-connection bootstrapServers="kafka:9092" groupId="order-service"/>
+</kafka:consumer-config>
+<flow name="kafkaOrderFlow">
+    <kafka:message-listener config-ref="Kafka_Config" topic="orders" />
+    <logger message="Kafka message: #[payload]"/>
+</flow>
+```
+
+Spring Boot Java:
+```java
+@Component
+public class OrderKafkaConsumer {
+    private static final Logger log = LoggerFactory.getLogger(OrderKafkaConsumer.class);
+
+    @KafkaListener(topics = "orders", groupId = "order-service")
+    public void consume(ConsumerRecord<String, String> record) {
+        log.info("Kafka message: key={}, value={}, partition={}, offset={}",
+            record.key(), record.value(), record.partition(), record.offset());
+        // Process the message
+    }
+
+    // With JSON deserialization:
+    @KafkaListener(topics = "orders", groupId = "order-service",
+        containerFactory = "orderKafkaListenerContainerFactory")
+    public void consumeOrder(OrderEvent event) {
+        log.info("Order event received: {}", event.getOrderId());
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft kafka:message-listener maps to @KafkaListener.
+- bootstrapServers maps to spring.kafka.bootstrap-servers.
+- groupId maps to @KafkaListener groupId or spring.kafka.consumer.group-id.
+- Configure via spring.kafka.consumer.* properties.""",
+    },
+    {
+        "title": "Kafka Producer Pattern",
+        "category": "messaging",
+        "content": """MuleSoft kafka:publish -> Spring KafkaTemplate
+
+MuleSoft XML:
+```xml
+<kafka:publish config-ref="Kafka_Config" topic="events">
+    <kafka:message key="#[payload.eventId]">
+        <kafka:body>#[output application/json --- payload]</kafka:body>
+    </kafka:message>
+</kafka:publish>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class EventPublisher {
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    public EventPublisher(KafkaTemplate<String, Object> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
+    }
+
+    public CompletableFuture<SendResult<String, Object>> publishEvent(DomainEvent event) {
+        return kafkaTemplate.send("events", event.getEventId(), event);
+    }
+
+    // With callback:
+    public void publishEventWithCallback(DomainEvent event) {
+        kafkaTemplate.send("events", event.getEventId(), event)
+            .whenComplete((result, ex) -> {
+                if (ex == null) {
+                    log.info("Event sent: topic={}, offset={}",
+                        result.getRecordMetadata().topic(),
+                        result.getRecordMetadata().offset());
+                } else {
+                    log.error("Failed to send event", ex);
+                }
+            });
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft kafka:publish maps to KafkaTemplate.send().
+- Message key maps to the key parameter.
+- Message body serialized via configured serializer.
+- Add spring-kafka dependency.""",
+    },
+    {
+        "title": "RabbitMQ AMQP Consumer",
+        "category": "messaging",
+        "content": """MuleSoft amqp:listener -> Spring AMQP @RabbitListener
+
+MuleSoft XML:
+```xml
+<amqp:config name="AMQP_Config">
+    <amqp:connection host="rabbitmq" port="5672" username="guest" password="guest"/>
+</amqp:config>
+<flow name="amqpOrderFlow">
+    <amqp:listener config-ref="AMQP_Config" queueName="orders.queue"/>
+    <logger message="AMQP message: #[payload]"/>
+</flow>
+```
+
+Spring Boot Java:
+```java
+@Component
+public class OrderRabbitConsumer {
+    private static final Logger log = LoggerFactory.getLogger(OrderRabbitConsumer.class);
+
+    @RabbitListener(queues = "orders.queue")
+    public void handleOrder(OrderMessage order) {
+        log.info("AMQP message received: {}", order);
+        // Process order
+    }
+
+    @RabbitListener(queues = "orders.queue")
+    public void handleWithHeaders(@Payload String message,
+            @Header("x-priority") String priority,
+            Channel channel,
+            @Header(AmqpHeaders.DELIVERY_TAG) long tag) throws IOException {
+        try {
+            processMessage(message);
+            channel.basicAck(tag, false);
+        } catch (Exception e) {
+            channel.basicNack(tag, false, true);
+        }
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft amqp:listener maps to @RabbitListener.
+- queueName maps to queues attribute.
+- AMQP connection properties map to spring.rabbitmq.* config.
+- Manual ack with Channel.basicAck() for reliable processing.""",
+    },
+    {
+        "title": "Event-Driven Architecture with Spring Events",
+        "category": "messaging",
+        "content": """MuleSoft VM queues for internal messaging -> Spring Application Events
+
+MuleSoft XML:
+```xml
+<vm:config name="VM_Config">
+    <vm:queues>
+        <vm:queue queueName="order.created"/>
+        <vm:queue queueName="notification.send"/>
+    </vm:queues>
+</vm:config>
+<vm:publish config-ref="VM_Config" queueName="order.created">
+    <vm:content>#[payload]</vm:content>
+</vm:publish>
+```
+
+Spring Boot Java:
+```java
+// Event class
+public class OrderCreatedEvent {
+    private final Long orderId;
+    private final String customerEmail;
+    private final BigDecimal total;
+
+    public OrderCreatedEvent(Long orderId, String customerEmail, BigDecimal total) {
+        this.orderId = orderId;
+        this.customerEmail = customerEmail;
+        this.total = total;
+    }
+    // getters
+}
+
+// Publisher
+@Service
+public class OrderService {
+    private final ApplicationEventPublisher eventPublisher;
+
+    @Transactional
+    public Order createOrder(OrderRequest request) {
+        Order order = orderRepository.save(toEntity(request));
+        eventPublisher.publishEvent(new OrderCreatedEvent(
+            order.getId(), request.getEmail(), order.getTotal()));
+        return order;
+    }
+}
+
+// Listener
+@Component
+public class OrderEventListener {
+    @EventListener
+    public void onOrderCreated(OrderCreatedEvent event) {
+        log.info("Order created: {}", event.getOrderId());
+        notificationService.sendConfirmation(event.getCustomerEmail());
+    }
+
+    @Async
+    @EventListener
+    public void onOrderCreatedAsync(OrderCreatedEvent event) {
+        // Runs in separate thread
+        analyticsService.trackOrder(event);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft vm:publish/vm:listener maps to ApplicationEventPublisher/EventListener.
+- VM queues are replaced by strongly-typed event objects.
+- Use @Async @EventListener for non-blocking processing.
+- For cross-service events, use Kafka/RabbitMQ instead.""",
+    },
+    {
+        "title": "Dead Letter Queue Pattern",
+        "category": "messaging",
+        "content": """MuleSoft error handling with redelivery -> Spring DLQ pattern
+
+MuleSoft XML:
+```xml
+<flow name="orderProcessor">
+    <jms:listener config-ref="JMS_Config" destination="orders.queue">
+        <redelivery-policy maxRedeliveryCount="3" redeliveryDelay="5000"/>
+    </jms:listener>
+    <error-handler>
+        <on-error-propagate>
+            <jms:publish config-ref="JMS_Config" destination="orders.dlq">
+                <jms:message>
+                    <jms:body>#[payload]</jms:body>
+                </jms:message>
+            </jms:publish>
+        </on-error-propagate>
+    </error-handler>
+</flow>
+```
+
+Spring Boot Java:
+```java
+@Configuration
+public class JmsErrorConfig {
+    @Bean
+    public DefaultJmsListenerContainerFactory jmsListenerContainerFactory(
+            ConnectionFactory connectionFactory) {
+        DefaultJmsListenerContainerFactory factory = new DefaultJmsListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setErrorHandler(t -> log.error("JMS Error", t));
+        return factory;
+    }
+}
+
+@Component
+public class OrderProcessor {
+    private final JmsTemplate jmsTemplate;
+    private static final int MAX_RETRIES = 3;
+
+    @JmsListener(destination = "orders.queue")
+    public void processOrder(Message message) {
+        int deliveryCount = message.getIntProperty("JMSXDeliveryCount");
+        try {
+            OrderMessage order = parseMessage(message);
+            orderService.process(order);
+        } catch (Exception e) {
+            if (deliveryCount >= MAX_RETRIES) {
+                log.error("Max retries reached, sending to DLQ");
+                jmsTemplate.convertAndSend("orders.dlq", message);
+            } else {
+                throw new JmsException("Retry") {};
+            }
+        }
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft redelivery-policy maps to retry logic with delivery count check.
+- on-error-propagate to DLQ maps to manual DLQ publishing after max retries.
+- maxRedeliveryCount maps to MAX_RETRIES constant.
+- Spring AMQP has built-in DLQ support via x-dead-letter-exchange.""",
+    },
+    {
+        "title": "Request-Reply Messaging Pattern",
+        "category": "messaging",
+        "content": """MuleSoft JMS request-reply -> Spring JMS with reply
+
+MuleSoft XML:
+```xml
+<jms:publish-consume config-ref="JMS_Config"
+    destination="request.queue"
+    maximumWait="30000">
+    <jms:message>
+        <jms:body>#[output application/json --- payload]</jms:body>
+    </jms:message>
+</jms:publish-consume>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class RequestReplyService {
+    private final JmsTemplate jmsTemplate;
+
+    public String sendAndReceive(String request) {
+        Message reply = jmsTemplate.sendAndReceive("request.queue", session -> {
+            TextMessage message = session.createTextMessage(request);
+            message.setJMSReplyTo(session.createTemporaryQueue());
+            return message;
+        });
+        return ((TextMessage) reply).getText();
+    }
+}
+
+// Responder side:
+@Component
+public class RequestResponder {
+    @JmsListener(destination = "request.queue")
+    @SendTo
+    public String handleRequest(String request) {
+        return processRequest(request);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft jms:publish-consume (request-reply) maps to JmsTemplate.sendAndReceive().
+- maximumWait maps to jmsTemplate.setReceiveTimeout().
+- Response side uses @JmsListener with @SendTo for automatic reply.""",
+    },
+    {
+        "title": "AMQP Topic Exchange Pattern",
+        "category": "messaging",
+        "content": """MuleSoft AMQP topic exchange -> Spring RabbitMQ Topic Exchange
+
+MuleSoft XML:
+```xml
+<amqp:publish config-ref="AMQP_Config"
+    exchangeName="events.topic"
+    routingKey="order.created">
+    <amqp:message>
+        <amqp:body>#[output application/json --- payload]</amqp:body>
+    </amqp:message>
+</amqp:publish>
+```
+
+Spring Boot Java:
+```java
+@Configuration
+public class RabbitConfig {
+    @Bean
+    public TopicExchange eventsExchange() {
+        return new TopicExchange("events.topic");
+    }
+
+    @Bean
+    public Queue orderCreatedQueue() {
+        return QueueBuilder.durable("order.created.queue").build();
+    }
+
+    @Bean
+    public Binding orderBinding(Queue orderCreatedQueue, TopicExchange eventsExchange) {
+        return BindingBuilder.bind(orderCreatedQueue)
+            .to(eventsExchange).with("order.created");
+    }
+}
+
+@Service
+public class EventPublisher {
+    private final RabbitTemplate rabbitTemplate;
+
+    public void publishOrderCreated(OrderEvent event) {
+        rabbitTemplate.convertAndSend("events.topic", "order.created", event);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft amqp:publish with exchangeName maps to RabbitTemplate.convertAndSend().
+- routingKey maps directly to the routing key parameter.
+- Exchange/Queue/Binding configured as Spring @Bean declarations.
+- Topic exchange supports wildcard routing (order.* or order.#).""",
+    },
+    {
+        "title": "SQS Queue Integration",
+        "category": "messaging",
+        "content": """MuleSoft sqs:receive-messages -> Spring Cloud AWS SQS
+
+MuleSoft XML:
+```xml
+<sqs:config name="SQS_Config">
+    <sqs:connection accessKey="${aws.accessKey}" secretKey="${aws.secretKey}" region="us-east-1"/>
+</sqs:config>
+<flow name="sqsListenerFlow">
+    <sqs:receivemessages config-ref="SQS_Config" queueUrl="${sqs.queue.url}"/>
+    <logger message="SQS message: #[payload]"/>
+</flow>
+```
+
+Spring Boot Java:
+```java
+@Component
+public class SqsMessageHandler {
+    private static final Logger log = LoggerFactory.getLogger(SqsMessageHandler.class);
+
+    @SqsListener("${sqs.queue.name}")
+    public void handleMessage(String message) {
+        log.info("SQS message: {}", message);
+        // Process message
+    }
+
+    @SqsListener(value = "${sqs.queue.name}", deletionPolicy = SqsMessageDeletionPolicy.ON_SUCCESS)
+    public void handleWithAck(@Payload OrderMessage order,
+            @Header("SenderId") String senderId) {
+        log.info("Order from {}: {}", senderId, order);
+        orderService.process(order);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft sqs:receivemessages maps to @SqsListener.
+- Queue URL/name configured via properties.
+- AWS credentials via spring.cloud.aws.credentials.* or IAM roles.
+- DeletionPolicy controls when message is deleted from queue.""",
+    },
+
+    # ==================================================================
+    #  12. Cloud & DevOps Patterns (12 docs)
+    # ==================================================================
+    {
+        "title": "Docker Container Configuration",
+        "category": "devops",
+        "content": """MuleSoft Runtime -> Spring Boot Docker Container
+
+MuleSoft Dockerfile (runtime):
+```dockerfile
+FROM mulesoft/mule-ee:4.4.0
+COPY target/*.jar /opt/mule/apps/
+```
+
+Spring Boot Dockerfile:
+```dockerfile
+FROM eclipse-temurin:17-jre-alpine AS runtime
+WORKDIR /app
+COPY target/*.jar app.jar
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s \\
+    CMD wget -qO- http://localhost:8080/actuator/health || exit 1
+ENTRYPOINT ["java", "-XX:+UseContainerSupport", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
+```
+
+Multi-stage build:
+```dockerfile
+FROM eclipse-temurin:17-jdk-alpine AS builder
+WORKDIR /build
+COPY pom.xml .
+COPY src ./src
+RUN ./mvnw package -DskipTests
+
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
+COPY --from=builder /build/target/*.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+Key mapping rules:
+- MuleSoft EE runtime image replaced by Eclipse Temurin JRE.
+- MuleSoft app deployment to /opt/mule/apps/ becomes simple JAR execution.
+- Add HEALTHCHECK using Spring Actuator /health endpoint.
+- Use multi-stage build to reduce image size.
+- Set -XX:+UseContainerSupport for container-aware JVM.""",
+    },
+    {
+        "title": "Kubernetes Deployment",
+        "category": "devops",
+        "content": """MuleSoft CloudHub -> Spring Boot Kubernetes Deployment
+
+Spring Boot k8s deployment:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  labels:
+    app: order-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: myregistry/order-service:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: password
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+spec:
+  selector:
+    app: order-service
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP
+```
+
+Key mapping rules:
+- MuleSoft CloudHub workers map to Kubernetes replicas.
+- CloudHub properties map to Kubernetes env vars or ConfigMaps.
+- CloudHub health checks map to readiness/liveness probes.
+- Always set resource requests and limits.
+- Use Secrets for sensitive configuration.""",
+    },
+    {
+        "title": "CI/CD Pipeline with GitHub Actions",
+        "category": "devops",
+        "content": """MuleSoft Maven deploy -> Spring Boot GitHub Actions CI/CD
+
+```yaml
+name: Build and Deploy
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build and Test
+        run: mvn clean verify
+
+      - name: Build Docker Image
+        if: github.ref == 'refs/heads/main'
+        run: docker build -t myregistry/app:${{ github.sha }} .
+
+      - name: Push to Registry
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker push myregistry/app:${{ github.sha }}
+
+      - name: Deploy to Azure
+        if: github.ref == 'refs/heads/main'
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: my-spring-app
+          images: myregistry/app:${{ github.sha }}
+```
+
+Key mapping rules:
+- MuleSoft Maven plugin deploy becomes GitHub Actions workflow.
+- mule:deploy goal replaced by Docker build + push + deploy.
+- CloudHub deployment replaced by Azure/AWS/K8s deployment step.
+- Always run tests before deployment.
+- Use GitHub Secrets for credentials.""",
+    },
+    {
+        "title": "Application Monitoring with Actuator",
+        "category": "devops",
+        "content": """MuleSoft Anypoint Monitoring -> Spring Boot Actuator + Micrometer
+
+MuleSoft monitoring is built into CloudHub. Spring Boot uses Actuator.
+
+```yaml
+# application.yml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: order-service
+      environment: ${SPRING_PROFILES_ACTIVE:local}
+```
+
+```java
+@Component
+public class MigrationMetrics {
+    private final Counter migrationsTotal;
+    private final Timer migrationDuration;
+
+    public MigrationMetrics(MeterRegistry registry) {
+        this.migrationsTotal = Counter.builder("migrations.total")
+            .description("Total migrations processed")
+            .tag("type", "mulesoft-to-springboot")
+            .register(registry);
+        this.migrationDuration = Timer.builder("migration.duration")
+            .description("Migration processing time")
+            .register(registry);
+    }
+
+    public void recordMigration(Runnable migration) {
+        migrationDuration.record(migration);
+        migrationsTotal.increment();
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft Anypoint Monitoring maps to Spring Actuator endpoints.
+- Custom metrics use Micrometer (Counter, Timer, Gauge).
+- Prometheus export for Grafana dashboards.
+- Health probes for Kubernetes readiness/liveness.
+- /actuator/info for build and app info.""",
+    },
+    {
+        "title": "Environment-Specific Configuration",
+        "category": "devops",
+        "content": """MuleSoft properties per environment -> Spring Profiles
+
+MuleSoft:
+```xml
+<!-- config.yaml -->
+local:
+  db.host: "localhost"
+  db.port: "3306"
+dev:
+  db.host: "dev-db.example.com"
+  db.port: "3306"
+prod:
+  db.host: "prod-db.example.com"
+  db.port: "3306"
+```
+
+Spring Boot:
+```yaml
+# application.yml (common)
+spring:
+  application:
+    name: order-service
+
+# application-local.yml
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/orders
+  jpa:
+    show-sql: true
+
+# application-dev.yml
+spring:
+  datasource:
+    url: jdbc:mysql://dev-db.example.com:3306/orders
+
+# application-prod.yml
+spring:
+  datasource:
+    url: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}
+    hikari:
+      maximum-pool-size: 20
+  jpa:
+    show-sql: false
+```
+
+Activate profile:
+```bash
+# Via environment variable
+export SPRING_PROFILES_ACTIVE=prod
+
+# Via command line
+java -jar app.jar --spring.profiles.active=prod
+
+# In Kubernetes
+env:
+  - name: SPRING_PROFILES_ACTIVE
+    value: "prod"
+```
+
+Key mapping rules:
+- MuleSoft config.yaml environment sections become Spring profile-specific YAML files.
+- ${property} placeholders work the same way.
+- Use environment variables for sensitive prod values.
+- Profile precedence: application.yml < application-{profile}.yml < env vars.""",
+    },
+    {
+        "title": "Log4j2 to Logback Migration",
+        "category": "devops",
+        "content": """MuleSoft log4j2.xml -> Spring Boot Logback (logback-spring.xml)
+
+MuleSoft log4j2.xml:
+```xml
+<Configuration>
+    <Appenders>
+        <RollingFile name="file" fileName="logs/mule-app.log"
+            filePattern="logs/mule-app-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="%d [%t] %-5p %c - %m%n"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy/>
+                <SizeBasedTriggeringPolicy size="10 MB"/>
+            </Policies>
+        </RollingFile>
+    </Appenders>
+    <Loggers>
+        <Logger name="com.mycompany" level="DEBUG"/>
+        <Root level="INFO">
+            <AppenderRef ref="file"/>
+        </Root>
+    </Loggers>
+</Configuration>
+```
+
+Spring Boot logback-spring.xml:
+```xml
+<configuration>
+    <springProfile name="!prod">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="prod">
+        <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>logs/app.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>logs/app-%d{yyyy-MM-dd}-%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>30</maxHistory>
+            </rollingPolicy>
+            <encoder>
+                <pattern>%d [%thread] %-5level %logger{36} - %msg%n</pattern>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="FILE"/>
+        </root>
+    </springProfile>
+
+    <logger name="com.example" level="DEBUG"/>
+</configuration>
+```
+
+Key mapping rules:
+- MuleSoft log4j2.xml maps to logback-spring.xml (Spring Boot default).
+- RollingFile appender maps to RollingFileAppender.
+- PatternLayout maps to encoder pattern.
+- SizeBasedTriggeringPolicy maps to maxFileSize in SizeAndTimeBasedRollingPolicy.
+- Use <springProfile> for environment-specific logging.""",
+    },
+    {
+        "title": "Azure App Service Deployment",
+        "category": "devops",
+        "content": """MuleSoft CloudHub -> Azure App Service deployment
+
+Azure deployment configuration:
+```yaml
+# azure-pipelines.yml or application.yml for Azure
+spring:
+  cloud:
+    azure:
+      active-directory:
+        enabled: true
+        credential:
+          client-id: ${AZURE_CLIENT_ID}
+          client-secret: ${AZURE_CLIENT_SECRET}
+        profile:
+          tenant-id: ${AZURE_TENANT_ID}
+```
+
+Azure App Service config:
+```bash
+# Create App Service
+az webapp create --name my-spring-app \\
+  --resource-group myResourceGroup \\
+  --plan myAppServicePlan \\
+  --runtime "JAVA:17-java17"
+
+# Configure settings
+az webapp config appsettings set \\
+  --name my-spring-app \\
+  --resource-group myResourceGroup \\
+  --settings SPRING_PROFILES_ACTIVE=prod \\
+             DB_HOST=mydb.mysql.database.azure.com
+
+# Deploy JAR
+az webapp deploy --name my-spring-app \\
+  --resource-group myResourceGroup \\
+  --src-path target/app.jar \\
+  --type jar
+```
+
+Key mapping rules:
+- MuleSoft CloudHub maps to Azure App Service or Azure Functions.
+- CloudHub worker size maps to App Service Plan SKU.
+- CloudHub properties map to App Service Application Settings.
+- CloudHub Object Store maps to Azure Redis Cache.
+- Use managed identity instead of connection strings where possible.""",
+    },
+    {
+        "title": "Health Check and Readiness Probes",
+        "category": "devops",
+        "content": """MuleSoft API health check -> Spring Boot Actuator health
+
+MuleSoft custom health flow:
+```xml
+<flow name="healthCheckFlow">
+    <http:listener path="/health" method="GET"/>
+    <db:select config-ref="Database_Config">
+        <db:sql>SELECT 1</db:sql>
+    </db:select>
+    <set-payload value='{"status": "UP"}'/>
+</flow>
+```
+
+Spring Boot Actuator (automatic):
+```java
+@Component
+public class CustomHealthIndicator implements HealthIndicator {
+    private final ExternalService externalService;
+
+    @Override
+    public Health health() {
+        try {
+            externalService.ping();
+            return Health.up()
+                .withDetail("externalService", "available")
+                .withDetail("responseTime", "45ms")
+                .build();
+        } catch (Exception e) {
+            return Health.down()
+                .withDetail("externalService", "unavailable")
+                .withDetail("error", e.getMessage())
+                .build();
+        }
+    }
+}
+```
+
+```yaml
+management:
+  endpoint:
+    health:
+      show-details: when-authorized
+      group:
+        readiness:
+          include: db, redis, customHealth
+        liveness:
+          include: ping
+```
+
+Key mapping rules:
+- MuleSoft custom health flows become Spring Actuator HealthIndicator.
+- Database health check is automatic with spring-boot-starter-data-jpa.
+- Custom checks implement HealthIndicator interface.
+- Group health checks into readiness and liveness probes.
+- /actuator/health/readiness and /actuator/health/liveness for K8s.""",
+    },
+
+    # ==================================================================
+    #  13. File & FTP Operations (8 docs)
+    # ==================================================================
+    {
+        "title": "File Read Operation",
+        "category": "file-operations",
+        "content": """MuleSoft file:read -> Spring Resource/Files API
+
+MuleSoft XML:
+```xml
+<file:read config-ref="File_Config" path="#[vars.filePath]"/>
+<set-variable variableName="fileContent" value="#[payload]"/>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class FileService {
+    @Value("${app.file.base-path:/data/files}")
+    private String basePath;
+
+    public String readFile(String relativePath) throws IOException {
+        Path path = Path.of(basePath, relativePath).normalize();
+        // Security: prevent path traversal
+        if (!path.startsWith(Path.of(basePath))) {
+            throw new SecurityException("Path traversal detected");
+        }
+        return Files.readString(path, StandardCharsets.UTF_8);
+    }
+
+    public byte[] readBinaryFile(String relativePath) throws IOException {
+        Path path = Path.of(basePath, relativePath).normalize();
+        return Files.readAllBytes(path);
+    }
+
+    // For classpath resources:
+    public String readResource(String resourcePath) throws IOException {
+        Resource resource = new ClassPathResource(resourcePath);
+        return new String(resource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft file:read maps to java.nio.file.Files.readString() or readAllBytes().
+- Always validate paths to prevent path traversal attacks.
+- Use ClassPathResource for bundled files.
+- Configure base path via application properties.""",
+    },
+    {
+        "title": "File Write Operation",
+        "category": "file-operations",
+        "content": """MuleSoft file:write -> Spring Files.write()
+
+MuleSoft XML:
+```xml
+<file:write config-ref="File_Config"
+    path="#[vars.outputPath]"
+    mode="CREATE_NEW">
+    <file:content>#[payload]</file:content>
+</file:write>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class FileWriterService {
+    @Value("${app.output.path:/data/output}")
+    private String outputPath;
+
+    public Path writeFile(String filename, String content) throws IOException {
+        Path dir = Path.of(outputPath);
+        Files.createDirectories(dir);
+        Path filePath = dir.resolve(filename).normalize();
+
+        // Security check
+        if (!filePath.startsWith(dir)) {
+            throw new SecurityException("Invalid filename");
+        }
+
+        return Files.writeString(filePath, content,
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE_NEW);
+    }
+
+    public Path writeFile(String filename, byte[] content) throws IOException {
+        Path dir = Path.of(outputPath);
+        Files.createDirectories(dir);
+        Path filePath = dir.resolve(filename);
+        return Files.write(filePath, content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft file:write maps to Files.writeString() or Files.write().
+- mode="CREATE_NEW" maps to StandardOpenOption.CREATE_NEW.
+- mode="OVERWRITE" maps to StandardOpenOption.TRUNCATE_EXISTING.
+- mode="APPEND" maps to StandardOpenOption.APPEND.
+- Always create parent directories with Files.createDirectories().""",
+    },
+    {
+        "title": "SFTP File Transfer",
+        "category": "file-operations",
+        "content": """MuleSoft sftp:read/sftp:write -> Spring Integration SFTP
+
+MuleSoft XML:
+```xml
+<sftp:config name="SFTP_Config">
+    <sftp:connection host="${sftp.host}" port="22"
+        username="${sftp.user}" password="${sftp.password}"
+        workingDir="/uploads"/>
+</sftp:config>
+<sftp:read config-ref="SFTP_Config" path="/data/input.csv"/>
+<sftp:write config-ref="SFTP_Config" path="/data/output.csv">
+    <sftp:content>#[payload]</sftp:content>
+</sftp:write>
+```
+
+Spring Boot Java:
+```java
+@Configuration
+public class SftpConfig {
+    @Bean
+    public SessionFactory<SftpClient.DirEntry> sftpSessionFactory() {
+        DefaultSftpSessionFactory factory = new DefaultSftpSessionFactory();
+        factory.setHost("${sftp.host}");
+        factory.setPort(22);
+        factory.setUser("${sftp.user}");
+        factory.setPassword("${sftp.password}");
+        factory.setAllowUnknownKeys(true);
+        return factory;
+    }
+
+    @Bean
+    public SftpRemoteFileTemplate sftpTemplate(SessionFactory<SftpClient.DirEntry> factory) {
+        return new SftpRemoteFileTemplate(factory);
+    }
+}
+
+@Service
+public class SftpService {
+    private final SftpRemoteFileTemplate sftpTemplate;
+
+    public byte[] downloadFile(String remotePath) {
+        return sftpTemplate.execute(session -> {
+            ByteArrayOutputStream os = new ByteArrayOutputStream();
+            session.read(remotePath, os);
+            return os.toByteArray();
+        });
+    }
+
+    public void uploadFile(String remotePath, byte[] content) {
+        sftpTemplate.execute(session -> {
+            session.write(new ByteArrayInputStream(content), remotePath);
+            return null;
+        });
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft sftp:config maps to DefaultSftpSessionFactory @Bean.
+- sftp:read maps to session.read() via SftpRemoteFileTemplate.
+- sftp:write maps to session.write().
+- Add spring-integration-sftp dependency.
+- Use key-based auth in production instead of passwords.""",
+    },
+    {
+        "title": "File Watcher / Polling",
+        "category": "file-operations",
+        "content": """MuleSoft file:listener -> Spring WatchService or @Scheduled polling
+
+MuleSoft XML:
+```xml
+<file:listener config-ref="File_Config"
+    directory="/data/inbox"
+    autoDelete="true"
+    watermarkEnabled="true">
+    <scheduling-strategy>
+        <fixed-frequency frequency="5000"/>
+    </scheduling-strategy>
+    <file:matcher filenamePattern="*.csv"/>
+</file:listener>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class FilePollingService {
+    private static final Logger log = LoggerFactory.getLogger(FilePollingService.class);
+
+    @Value("${app.inbox.path:/data/inbox}")
+    private String inboxPath;
+
+    @Scheduled(fixedDelay = 5000)
+    public void pollInbox() throws IOException {
+        Path inbox = Path.of(inboxPath);
+        if (!Files.exists(inbox)) return;
+
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(inbox, "*.csv")) {
+            for (Path file : stream) {
+                try {
+                    String content = Files.readString(file);
+                    processFile(file.getFileName().toString(), content);
+                    // autoDelete equivalent:
+                    Files.delete(file);
+                    log.info("Processed and deleted: {}", file.getFileName());
+                } catch (Exception e) {
+                    log.error("Failed to process: {}", file.getFileName(), e);
+                    // Move to error directory
+                    Files.move(file, Path.of(inboxPath, "error", file.getFileName().toString()));
+                }
+            }
+        }
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft file:listener with polling maps to @Scheduled method.
+- fixed-frequency maps to fixedDelay in milliseconds.
+- filenamePattern maps to DirectoryStream glob filter.
+- autoDelete=true maps to Files.delete() after processing.
+- watermarkEnabled maps to tracking processed files to avoid reprocessing.""",
+    },
+
+    # ==================================================================
+    #  14. API Design & Documentation (10 docs)
+    # ==================================================================
+    {
+        "title": "RAML to OpenAPI Specification",
+        "category": "api-design",
+        "content": """MuleSoft RAML API definition -> Spring Boot OpenAPI/Swagger
+
+MuleSoft RAML:
+```yaml
+#%RAML 1.0
+title: Customer API
+version: v1
+baseUri: /api/v1
+
+/customers:
+  get:
+    description: List all customers
+    queryParameters:
+      page:
+        type: integer
+        default: 0
+      size:
+        type: integer
+        default: 20
+    responses:
+      200:
+        body:
+          application/json:
+            type: Customer[]
+  post:
+    body:
+      application/json:
+        type: CustomerCreate
+    responses:
+      201:
+        body:
+          application/json:
+            type: Customer
+```
+
+Spring Boot OpenAPI annotations:
+```java
+@RestController
+@RequestMapping("/api/v1/customers")
+@Tag(name = "Customers", description = "Customer management API")
+public class CustomerController {
+
+    @Operation(summary = "List all customers", description = "Returns paginated list of customers")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "Successfully retrieved customers",
+            content = @Content(array = @ArraySchema(schema = @Schema(implementation = CustomerDTO.class)))),
+        @ApiResponse(responseCode = "400", description = "Invalid parameters")
+    })
+    @GetMapping
+    public ResponseEntity<Page<CustomerDTO>> listCustomers(
+            @Parameter(description = "Page number") @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "Page size") @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(customerService.findAll(PageRequest.of(page, size)));
+    }
+
+    @Operation(summary = "Create a new customer")
+    @ApiResponse(responseCode = "201", description = "Customer created")
+    @PostMapping
+    public ResponseEntity<CustomerDTO> createCustomer(
+            @Valid @RequestBody CustomerCreateRequest request) {
+        CustomerDTO created = customerService.create(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(created);
+    }
+}
+```
+
+Key mapping rules:
+- RAML resource paths map to @RequestMapping paths.
+- RAML methods map to @GetMapping/@PostMapping etc.
+- RAML queryParameters map to @RequestParam with @Parameter.
+- RAML types map to Java DTOs with @Schema.
+- RAML responses map to @ApiResponse annotations.
+- Add springdoc-openapi-starter-webmvc-ui for Swagger UI at /swagger-ui.html.""",
+    },
+    {
+        "title": "API Versioning Strategy",
+        "category": "api-design",
+        "content": """MuleSoft API versioning -> Spring Boot versioning
+
+MuleSoft uses baseUri versioning in RAML. Spring Boot has multiple options.
+
+URL Path Versioning (most common):
+```java
+@RestController
+@RequestMapping("/api/v1/customers")
+public class CustomerControllerV1 {
+    @GetMapping
+    public ResponseEntity<List<CustomerV1DTO>> getCustomers() { ... }
+}
+
+@RestController
+@RequestMapping("/api/v2/customers")
+public class CustomerControllerV2 {
+    @GetMapping
+    public ResponseEntity<Page<CustomerV2DTO>> getCustomers(Pageable pageable) { ... }
+}
+```
+
+Header Versioning:
+```java
+@RestController
+@RequestMapping("/api/customers")
+public class CustomerController {
+    @GetMapping(headers = "X-API-Version=1")
+    public ResponseEntity<List<CustomerV1DTO>> getCustomersV1() { ... }
+
+    @GetMapping(headers = "X-API-Version=2")
+    public ResponseEntity<Page<CustomerV2DTO>> getCustomersV2(Pageable pageable) { ... }
+}
+```
+
+Key mapping rules:
+- MuleSoft RAML baseUri versioning (/api/v1) maps to URL path versioning.
+- Use @RequestMapping at class level for version prefix.
+- Create separate DTOs per version for backward compatibility.
+- Deprecate old versions with @Deprecated annotation.""",
+    },
+    {
+        "title": "Request Validation Patterns",
+        "category": "api-design",
+        "content": """MuleSoft validation module -> Spring Boot Bean Validation
+
+MuleSoft XML:
+```xml
+<validation:is-not-blank value="#[payload.name]" message="Name is required"/>
+<validation:is-email email="#[payload.email]"/>
+<validation:validate-size value="#[payload.name]" min="2" max="100"/>
+```
+
+Spring Boot Java:
+```java
+public class CustomerCreateRequest {
+    @NotBlank(message = "Name is required")
+    @Size(min = 2, max = 100, message = "Name must be 2-100 characters")
+    private String name;
+
+    @NotBlank(message = "Email is required")
+    @Email(message = "Invalid email format")
+    private String email;
+
+    @Pattern(regexp = "^\\+?[1-9]\\d{1,14}$", message = "Invalid phone number")
+    private String phone;
+
+    @Min(value = 0, message = "Age must be positive")
+    @Max(value = 150, message = "Invalid age")
+    private Integer age;
+
+    @NotNull
+    @Valid
+    private AddressRequest address;  // Nested validation
+}
+
+@RestController
+public class CustomerController {
+    @PostMapping("/customers")
+    public ResponseEntity<?> create(@Valid @RequestBody CustomerCreateRequest request) {
+        // Validation happens automatically
+        return ResponseEntity.status(201).body(customerService.create(request));
+    }
+}
+
+@RestControllerAdvice
+public class ValidationExceptionHandler {
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
+        Map<String, String> errors = new HashMap<>();
+        ex.getBindingResult().getFieldErrors().forEach(e ->
+            errors.put(e.getField(), e.getDefaultMessage()));
+        return ResponseEntity.badRequest().body(Map.of("errors", errors));
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft validation:is-not-blank maps to @NotBlank.
+- validation:is-email maps to @Email.
+- validation:validate-size maps to @Size.
+- Use @Valid on @RequestBody for automatic validation.
+- Handle errors with @RestControllerAdvice.""",
+    },
+    {
+        "title": "API Rate Limiting",
+        "category": "api-design",
+        "content": """MuleSoft API Manager rate limiting -> Spring Boot rate limiting
+
+MuleSoft uses Anypoint API Manager for rate limiting policies.
+
+Spring Boot with Bucket4j:
+```java
+@Component
+public class RateLimitFilter extends OncePerRequestFilter {
+    private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
+
+    private Bucket createBucket() {
+        Bandwidth limit = Bandwidth.classic(100, Refill.greedy(100, Duration.ofMinutes(1)));
+        return Bucket.builder().addLimit(limit).build();
+    }
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+            HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
+        String clientIp = request.getRemoteAddr();
+        Bucket bucket = buckets.computeIfAbsent(clientIp, k -> createBucket());
+
+        if (bucket.tryConsume(1)) {
+            chain.doFilter(request, response);
+        } else {
+            response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+            response.getWriter().write("Rate limit exceeded");
+        }
+    }
+}
+
+// Or with Spring Cloud Gateway:
+@Bean
+public RouteLocator customRouteLocator(RouteLocatorBuilder builder) {
+    return builder.routes()
+        .route("rate_limited", r -> r.path("/api/**")
+            .filters(f -> f.requestRateLimiter(c -> c
+                .setRateLimiter(redisRateLimiter())
+                .setKeyResolver(userKeyResolver())))
+            .uri("lb://my-service"))
+        .build();
+}
+```
+
+Key mapping rules:
+- MuleSoft API Manager rate limiting maps to Bucket4j or Spring Cloud Gateway.
+- Rate limits per client IP or API key.
+- Use Redis-backed rate limiter for distributed deployments.
+- Return 429 Too Many Requests when limit exceeded.
+- Add X-RateLimit-Remaining and X-RateLimit-Reset headers.""",
+    },
+    {
+        "title": "CORS Configuration",
+        "category": "api-design",
+        "content": """MuleSoft CORS policy -> Spring Boot CORS config
+
+MuleSoft API Manager applies CORS policies. Spring Boot configures programmatically.
+
+```java
+@Configuration
+public class CorsConfig implements WebMvcConfigurer {
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/api/**")
+            .allowedOrigins("https://myapp.com", "https://staging.myapp.com")
+            .allowedMethods("GET", "POST", "PUT", "DELETE", "PATCH")
+            .allowedHeaders("*")
+            .exposedHeaders("X-Total-Count", "X-Page-Size")
+            .allowCredentials(true)
+            .maxAge(3600);
+    }
+}
+
+// Per-controller CORS:
+@CrossOrigin(origins = "https://myapp.com", maxAge = 3600)
+@RestController
+@RequestMapping("/api/public")
+public class PublicController {
+    // All endpoints in this controller allow CORS from myapp.com
+}
+```
+
+Key mapping rules:
+- MuleSoft CORS API Manager policy maps to WebMvcConfigurer.addCorsMappings().
+- Allowed origins list maps to allowedOrigins().
+- HTTP methods maps to allowedMethods().
+- Per-endpoint CORS uses @CrossOrigin annotation.
+- Set maxAge for preflight cache duration.""",
+    },
+    {
+        "title": "Global Exception Handling",
+        "category": "api-design",
+        "content": """MuleSoft global error handler -> Spring @RestControllerAdvice
+
+MuleSoft XML:
+```xml
+<error-handler name="globalErrorHandler">
+    <on-error-propagate type="APIKIT:NOT_FOUND">
+        <set-payload value='{"error": "Resource not found"}'/>
+        <set-variable variableName="httpStatus" value="404"/>
+    </on-error-propagate>
+    <on-error-propagate type="APIKIT:BAD_REQUEST">
+        <set-payload value='{"error": "Bad request"}'/>
+        <set-variable variableName="httpStatus" value="400"/>
+    </on-error-propagate>
+</error-handler>
+```
+
+Spring Boot Java:
+```java
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNotFound(ResourceNotFoundException ex) {
+        return ResponseEntity.status(404).body(new ErrorResponse(
+            404, "NOT_FOUND", ex.getMessage(), LocalDateTime.now()));
+    }
+
+    @ExceptionHandler(BadRequestException.class)
+    public ResponseEntity<ErrorResponse> handleBadRequest(BadRequestException ex) {
+        return ResponseEntity.badRequest().body(new ErrorResponse(
+            400, "BAD_REQUEST", ex.getMessage(), LocalDateTime.now()));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ErrorResponse> handleGeneral(Exception ex) {
+        log.error("Unexpected error", ex);
+        return ResponseEntity.status(500).body(new ErrorResponse(
+            500, "INTERNAL_ERROR", "An unexpected error occurred", LocalDateTime.now()));
+    }
+}
+
+public record ErrorResponse(int status, String code, String message, LocalDateTime timestamp) {}
+```
+
+Key mapping rules:
+- MuleSoft error-handler with on-error-propagate maps to @ExceptionHandler methods.
+- APIKIT:NOT_FOUND maps to ResourceNotFoundException handler returning 404.
+- APIKIT:BAD_REQUEST maps to BadRequestException handler returning 400.
+- Global catch-all maps to Exception.class handler.
+- Use consistent ErrorResponse DTO for all error responses.""",
+    },
+
+    # ==================================================================
+    #  15. Security Patterns (12 docs)
+    # ==================================================================
+    {
+        "title": "OAuth 2.0 Client Credentials Flow",
+        "category": "security-patterns",
+        "content": """MuleSoft oauth2 provider -> Spring Security OAuth2 Client
+
+MuleSoft XML:
+```xml
+<oauth2:token-request config-ref="OAuth2_Config"
+    path="/oauth/token"
+    grantType="CLIENT_CREDENTIALS"
+    clientId="${oauth.client.id}"
+    clientSecret="${oauth.client.secret}"/>
+```
+
+Spring Boot Java:
+```java
+@Configuration
+public class OAuth2ClientConfig {
+    @Bean
+    public WebClient webClient(OAuth2AuthorizedClientManager manager) {
+        ServletOAuth2AuthorizedClientExchangeFilterFunction oauth2 =
+            new ServletOAuth2AuthorizedClientExchangeFilterFunction(manager);
+        oauth2.setDefaultClientRegistrationId("my-service");
+        return WebClient.builder()
+            .apply(oauth2.oauth2Configuration())
+            .build();
+    }
+}
+```
+
+```yaml
+spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          my-service:
+            client-id: ${OAUTH_CLIENT_ID}
+            client-secret: ${OAUTH_CLIENT_SECRET}
+            authorization-grant-type: client_credentials
+            scope: read,write
+        provider:
+          my-service:
+            token-uri: https://auth.example.com/oauth/token
+```
+
+Key mapping rules:
+- MuleSoft oauth2:token-request maps to Spring Security OAuth2 client registration.
+- CLIENT_CREDENTIALS grant maps to authorization-grant-type: client_credentials.
+- Token management is automatic (caching, refresh).
+- WebClient with OAuth2 filter handles token injection.""",
+    },
+    {
+        "title": "JWT Token Validation",
+        "category": "security-patterns",
+        "content": """MuleSoft JWT validation policy -> Spring Security Resource Server
+
+MuleSoft API Manager JWT policy validates tokens. Spring Boot uses Resource Server.
+
+```java
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/api/public/**").permitAll()
+                .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .anyRequest().authenticated()
+            )
+            .oauth2ResourceServer(oauth2 -> oauth2
+                .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthConverter()))
+            );
+        return http.build();
+    }
+
+    private JwtAuthenticationConverter jwtAuthConverter() {
+        JwtGrantedAuthoritiesConverter converter = new JwtGrantedAuthoritiesConverter();
+        converter.setAuthoritiesClaimName("roles");
+        converter.setAuthorityPrefix("ROLE_");
+        JwtAuthenticationConverter jwtConverter = new JwtAuthenticationConverter();
+        jwtConverter.setJwtGrantedAuthoritiesConverter(converter);
+        return jwtConverter;
+    }
+}
+```
+
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://login.microsoftonline.com/{tenant-id}/v2.0
+          audiences: api://my-app
+```
+
+Key mapping rules:
+- MuleSoft JWT validation policy maps to oauth2ResourceServer().jwt().
+- Token issuer validation is automatic with issuer-uri.
+- Roles/claims extracted via JwtAuthenticationConverter.
+- Public endpoints use permitAll().
+- Admin endpoints use hasRole("ADMIN").""",
+    },
+    {
+        "title": "Azure AD Authentication",
+        "category": "security-patterns",
+        "content": """MuleSoft Azure AD policy -> Spring Boot Azure AD integration
+
+```java
+@Configuration
+@EnableWebSecurity
+public class AzureAdSecurityConfig {
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/", "/login/**", "/oauth2/**").permitAll()
+                .requestMatchers("/api/admin/**").hasAuthority("APPROLE_Admin")
+                .anyRequest().authenticated()
+            )
+            .oauth2Login(oauth2 -> oauth2
+                .loginPage("/oauth2/authorization/azure")
+            )
+            .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
+        return http.build();
+    }
+}
+```
+
+```yaml
+spring:
+  cloud:
+    azure:
+      active-directory:
+        enabled: true
+        credential:
+          client-id: ${AZURE_CLIENT_ID}
+          client-secret: ${AZURE_CLIENT_SECRET}
+        profile:
+          tenant-id: ${AZURE_TENANT_ID}
+        app-id-uri: api://mule-migrator
+        authorization-clients:
+          graph:
+            scopes: https://graph.microsoft.com/User.Read
+```
+
+Key mapping rules:
+- MuleSoft Azure AD policy maps to spring-cloud-azure-starter-active-directory.
+- Client ID/Secret configure via properties or env vars.
+- App roles from Azure AD map to Spring authorities with APPROLE_ prefix.
+- Group membership can be used for role-based access.
+- Use managed identity in Azure for zero-secret configuration.""",
+    },
+    {
+        "title": "API Key Authentication",
+        "category": "security-patterns",
+        "content": """MuleSoft Client ID enforcement -> Spring Boot API key filter
+
+MuleSoft uses API Manager client ID enforcement policy.
+
+Spring Boot Java:
+```java
+@Component
+public class ApiKeyFilter extends OncePerRequestFilter {
+    @Value("${app.api-keys}")
+    private Set<String> validApiKeys;
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+            HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
+
+        // Skip for public endpoints
+        if (request.getRequestURI().startsWith("/api/public/")) {
+            chain.doFilter(request, response);
+            return;
+        }
+
+        String apiKey = request.getHeader("X-API-Key");
+        if (apiKey == null || !validApiKeys.contains(apiKey)) {
+            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            response.setContentType("application/json");
+            response.getWriter().write(
+                "{\"error\":\"Invalid or missing API key\"}");
+            return;
+        }
+
+        chain.doFilter(request, response);
+    }
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return request.getRequestURI().startsWith("/actuator/");
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft Client ID enforcement maps to custom API key filter.
+- API key sent via X-API-Key header.
+- Store valid keys in database or environment variables.
+- Combine with rate limiting per API key.
+- Consider migrating to OAuth2 for production APIs.""",
+    },
+    {
+        "title": "Input Sanitization and XSS Prevention",
+        "category": "security-patterns",
+        "content": """MuleSoft input validation -> Spring Boot input sanitization
+
+```java
+@Component
+public class XssFilter extends OncePerRequestFilter {
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+            HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
+        chain.doFilter(new XssRequestWrapper(request), response);
+    }
+}
+
+public class XssRequestWrapper extends HttpServletRequestWrapper {
+    public XssRequestWrapper(HttpServletRequest request) {
+        super(request);
+    }
+
+    @Override
+    public String getParameter(String name) {
+        return sanitize(super.getParameter(name));
+    }
+
+    @Override
+    public String[] getParameterValues(String name) {
+        String[] values = super.getParameterValues(name);
+        if (values == null) return null;
+        return Arrays.stream(values)
+            .map(this::sanitize)
+            .toArray(String[]::new);
+    }
+
+    private String sanitize(String value) {
+        if (value == null) return null;
+        return value.replaceAll("<", "&lt;")
+                     .replaceAll(">", "&gt;")
+                     .replaceAll("\\(", "&#40;")
+                     .replaceAll("\\)", "&#41;")
+                     .replaceAll("'", "&#39;")
+                     .replaceAll("eval\\((.*)\\)", "")
+                     .replaceAll("[\\\"'][\\s]*javascript:(.*)[\\\"']", "\"\"");
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft validation module for input checking maps to Spring filters.
+- Sanitize all user input at the filter level.
+- Use @Valid with bean validation for structured input.
+- Enable Content-Security-Policy headers.
+- Use Thymeleaf's automatic escaping for HTML output.""",
+    },
+    {
+        "title": "HTTPS and TLS Configuration",
+        "category": "security-patterns",
+        "content": """MuleSoft TLS context -> Spring Boot SSL configuration
+
+MuleSoft XML:
+```xml
+<tls:context name="TLS_Config">
+    <tls:key-store type="jks" path="keystore.jks"
+        keyPassword="${tls.key.password}" password="${tls.store.password}"/>
+    <tls:trust-store type="jks" path="truststore.jks"
+        password="${tls.trust.password}"/>
+</tls:context>
+```
+
+Spring Boot application.yml:
+```yaml
+server:
+  port: 8443
+  ssl:
+    enabled: true
+    key-store: classpath:keystore.p12
+    key-store-password: ${SSL_KEYSTORE_PASSWORD}
+    key-store-type: PKCS12
+    key-alias: myapp
+    trust-store: classpath:truststore.p12
+    trust-store-password: ${SSL_TRUSTSTORE_PASSWORD}
+    trust-store-type: PKCS12
+
+# Force HTTPS redirect
+security:
+  require-ssl: true
+```
+
+```java
+@Configuration
+public class HttpsRedirectConfig {
+    @Bean
+    public ServletWebServerFactory servletContainer() {
+        TomcatServletWebServerFactory tomcat = new TomcatServletWebServerFactory();
+        tomcat.addAdditionalTomcatConnectors(httpToHttpsRedirectConnector());
+        return tomcat;
+    }
+
+    private Connector httpToHttpsRedirectConnector() {
+        Connector connector = new Connector(TomcatServletWebServerFactory.DEFAULT_PROTOCOL);
+        connector.setScheme("http");
+        connector.setPort(8080);
+        connector.setSecure(false);
+        connector.setRedirectPort(8443);
+        return connector;
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft tls:context maps to server.ssl.* properties.
+- JKS keystore should be converted to PKCS12 format.
+- key-store/trust-store paths map to classpath or file paths.
+- Always redirect HTTP to HTTPS in production.
+- Use Let's Encrypt or Azure Key Vault for certificate management.""",
+    },
+
+    # ==================================================================
+    #  16. Migration Best Practices (10 docs)
+    # ==================================================================
+    {
+        "title": "MuleSoft to Spring Boot Migration Checklist",
+        "category": "best-practices",
+        "content": """Complete migration checklist for MuleSoft to Spring Boot.
+
+Pre-Migration:
+1. Inventory all MuleSoft flows, connectors, and APIs
+2. Document all external system integrations
+3. Map MuleSoft properties to Spring Boot equivalents
+4. Identify DataWeave transformations for Java conversion
+5. Review error handling patterns
+
+Migration Steps:
+1. Create Spring Boot project with required dependencies
+2. Convert HTTP listeners to @RestController endpoints
+3. Convert database operations to Spring Data JPA repositories
+4. Convert message listeners to @JmsListener/@KafkaListener
+5. Convert DataWeave to Java Stream operations
+6. Implement error handling with @RestControllerAdvice
+7. Convert MuleSoft properties to application.yml
+8. Implement security (OAuth2/JWT/Azure AD)
+9. Add health checks via Spring Actuator
+10. Generate JUnit tests for all controllers and services
+
+Post-Migration:
+1. Run all generated JUnit tests
+2. Performance test with equivalent load
+3. Validate all API responses match original
+4. Check error handling for edge cases
+5. Update CI/CD pipelines
+6. Update API documentation (Swagger/OpenAPI)
+7. Monitor with Spring Actuator + Prometheus
+
+Common Pitfalls:
+- Forgetting to handle MuleSoft's automatic JSON serialization
+- Missing transaction boundaries that MuleSoft handles implicitly
+- Not converting DataWeave null-safe operators (?.) properly
+- Overlooking MuleSoft's automatic content type negotiation.""",
+    },
+    {
+        "title": "DataWeave to Java Stream Patterns",
+        "category": "best-practices",
+        "content": """Common DataWeave patterns and their Java Stream equivalents.
+
+Filter:
+```
+// DataWeave: payload filter ($.age > 18)
+// Java:
+list.stream().filter(item -> item.getAge() > 18).collect(Collectors.toList());
+```
+
+Map:
+```
+// DataWeave: payload map { name: $.firstName ++ " " ++ $.lastName }
+// Java:
+list.stream().map(item -> new NameDTO(item.getFirstName() + " " + item.getLastName()))
+    .collect(Collectors.toList());
+```
+
+Reduce:
+```
+// DataWeave: payload reduce ((item, acc = 0) -> acc + item.amount)
+// Java:
+list.stream().map(Item::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+```
+
+GroupBy:
+```
+// DataWeave: payload groupBy $.category
+// Java:
+list.stream().collect(Collectors.groupingBy(Item::getCategory));
+```
+
+FlatMap:
+```
+// DataWeave: payload flatMap $.items
+// Java:
+list.stream().flatMap(order -> order.getItems().stream()).collect(Collectors.toList());
+```
+
+DistinctBy:
+```
+// DataWeave: payload distinctBy $.email
+// Java:
+list.stream().collect(Collectors.collectingAndThen(
+    Collectors.toCollection(() -> new TreeSet<>(Comparator.comparing(User::getEmail))),
+    ArrayList::new));
+```
+
+OrderBy:
+```
+// DataWeave: payload orderBy $.name
+// Java:
+list.stream().sorted(Comparator.comparing(Item::getName)).collect(Collectors.toList());
+```
+
+Null-safe access:
+```
+// DataWeave: payload.address?.city default "Unknown"
+// Java:
+Optional.ofNullable(payload.getAddress()).map(Address::getCity).orElse("Unknown");
+```
+
+Key mapping rules:
+- DataWeave filter -> Java .filter()
+- DataWeave map -> Java .map()
+- DataWeave reduce -> Java .reduce()
+- DataWeave groupBy -> Java Collectors.groupingBy()
+- DataWeave ++ (concatenation) -> Java + or String.concat()
+- DataWeave default -> Java Optional.orElse()""",
+    },
+    {
+        "title": "MuleSoft Properties to Spring Boot Properties",
+        "category": "best-practices",
+        "content": """Property mapping reference from MuleSoft to Spring Boot.
+
+HTTP Properties:
+```
+# MuleSoft                          # Spring Boot
+http.port=8081                  ->  server.port=8081
+http.host=0.0.0.0              ->  server.address=0.0.0.0
+http.basePath=/api              ->  server.servlet.context-path=/api
+http.connectionTimeout=30000    ->  server.tomcat.connection-timeout=30s
+```
+
+Database Properties:
+```
+# MuleSoft                          # Spring Boot
+db.host=localhost               ->  spring.datasource.url=jdbc:mysql://localhost:3306/mydb
+db.port=3306                    ->  (included in URL)
+db.database=mydb                ->  (included in URL)
+db.user=admin                   ->  spring.datasource.username=admin
+db.password=secret              ->  spring.datasource.password=secret
+db.maxPoolSize=20               ->  spring.datasource.hikari.maximum-pool-size=20
+```
+
+JMS Properties:
+```
+# MuleSoft                          # Spring Boot
+jms.brokerUrl=tcp://...         ->  spring.activemq.broker-url=tcp://...
+jms.username=admin              ->  spring.activemq.user=admin
+jms.password=secret             ->  spring.activemq.password=secret
+```
+
+General Pattern:
+- MuleSoft ${property.name} -> Spring ${PROPERTY_NAME} or ${property.name}
+- MuleSoft secure:: properties -> Spring Vault or environment variables
+- MuleSoft global-property -> Spring application.yml property""",
+    },
+    {
+        "title": "Error Type Mapping Reference",
+        "category": "best-practices",
+        "content": """MuleSoft error types to Spring Boot exception/HTTP status mapping.
+
+```
+MuleSoft Error Type          -> Spring Boot Exception           -> HTTP Status
+APIKIT:NOT_FOUND             -> ResourceNotFoundException       -> 404
+APIKIT:BAD_REQUEST           -> BadRequestException             -> 400
+APIKIT:METHOD_NOT_ALLOWED    -> HttpRequestMethodNotSupported   -> 405
+APIKIT:UNSUPPORTED_MEDIA     -> HttpMediaTypeNotSupported       -> 415
+HTTP:UNAUTHORIZED            -> AccessDeniedException           -> 401
+HTTP:FORBIDDEN               -> AccessDeniedException           -> 403
+HTTP:TIMEOUT                 -> HttpTimeoutException            -> 408/504
+HTTP:CONNECTIVITY            -> ConnectException                -> 503
+HTTP:TOO_MANY_REQUESTS       -> TooManyRequestsException        -> 429
+DB:CONNECTIVITY              -> DataAccessException             -> 503
+DB:QUERY_EXECUTION           -> DataAccessException             -> 500
+DB:BAD_SQL                   -> BadSqlGrammarException          -> 500
+VALIDATION:INVALID_*         -> MethodArgumentNotValid          -> 400
+TRANSFORMATION               -> HttpMessageNotReadable          -> 400
+EXPRESSION                   -> EvaluationException             -> 500
+STREAM_MAXIMUM_SIZE          -> MaxUploadSizeExceededException  -> 413
+RETRY_EXHAUSTED              -> RetryExhaustedException         -> 503
+ANY                          -> Exception                       -> 500
+```
+
+Implementation:
+```java
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+    @ExceptionHandler(ResourceNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ErrorResponse notFound(ResourceNotFoundException e) {
+        return new ErrorResponse("NOT_FOUND", e.getMessage());
+    }
+
+    // ... map each MuleSoft error type to corresponding handler
+}
+```
+
+Key mapping rules:
+- Each MuleSoft error type should have a corresponding Spring exception class.
+- Create custom exception classes for domain-specific errors.
+- Use @ResponseStatus or explicit ResponseEntity for HTTP codes.
+- Log server errors (5xx), skip client errors (4xx) to reduce noise.""",
+    },
+    {
+        "title": "Connector to Spring Boot Library Mapping",
+        "category": "best-practices",
+        "content": """MuleSoft connector to Spring Boot dependency mapping reference.
+
+```
+MuleSoft Connector              -> Spring Boot Dependency
+http:listener/request           -> spring-boot-starter-web
+db:config (MySQL)               -> spring-boot-starter-data-jpa + mysql-connector-j
+db:config (PostgreSQL)          -> spring-boot-starter-data-jpa + postgresql
+db:config (Oracle)              -> spring-boot-starter-data-jpa + ojdbc11
+jms:config (ActiveMQ)           -> spring-boot-starter-activemq
+jms:config (Artemis)            -> spring-boot-starter-artemis
+amqp:config (RabbitMQ)          -> spring-boot-starter-amqp
+kafka:config                    -> spring-kafka
+salesforce:config               -> spring-boot-starter-web (REST API calls)
+sqs:config                      -> spring-cloud-aws-starter-sqs
+s3:config                       -> spring-cloud-aws-starter-s3
+email:config (SMTP)             -> spring-boot-starter-mail
+file:config                     -> java.nio.file (built-in)
+sftp:config                     -> spring-integration-sftp
+ftp:config                      -> spring-integration-ftp
+vm:config                       -> Spring ApplicationEvent (built-in)
+objectstore:config              -> spring-boot-starter-data-redis
+ws:consumer                     -> spring-boot-starter-webservices
+oauth2:config                   -> spring-boot-starter-oauth2-client
+ldap:config                     -> spring-boot-starter-data-ldap
+mongo:config                    -> spring-boot-starter-data-mongodb
+elasticsearch:config            -> spring-data-elasticsearch
+redis:config                    -> spring-boot-starter-data-redis
+scheduler                       -> @Scheduled (built-in with @EnableScheduling)
+```
+
+Key mapping rules:
+- Each MuleSoft connector maps to a specific Spring Boot starter.
+- Some connectors map to built-in Java APIs (file, vm).
+- Complex connectors (Salesforce) map to REST API calls via WebClient.
+- Always check Spring Boot version compatibility for starters.""",
+    },
+    {
+        "title": "Performance Optimization After Migration",
+        "category": "best-practices",
+        "content": """Performance considerations when migrating from MuleSoft to Spring Boot.
+
+Connection Pooling:
+```yaml
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 20       # Match MuleSoft pool size
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+```
+
+Async Processing:
+```java
+@Configuration
+@EnableAsync
+public class AsyncConfig {
+    @Bean
+    public Executor taskExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(10);
+        executor.setMaxPoolSize(50);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("async-");
+        return executor;
+    }
+}
+
+@Service
+public class NotificationService {
+    @Async
+    public CompletableFuture<Void> sendEmail(String to, String subject) {
+        // Non-blocking email send
+        return CompletableFuture.completedFuture(null);
+    }
+}
+```
+
+Response Compression:
+```yaml
+server:
+  compression:
+    enabled: true
+    mime-types: application/json,text/html,text/xml,text/plain
+    min-response-size: 1024
+```
+
+Caching:
+```java
+@Cacheable(value = "products", key = "#id", unless = "#result == null")
+public Product getProduct(Long id) { ... }
+```
+
+Key considerations:
+- MuleSoft's thread pool model differs from Spring Boot's thread-per-request.
+- Use @Async for non-blocking operations that were async in MuleSoft.
+- Enable compression for large JSON responses.
+- Use @Cacheable for frequently accessed, rarely changed data.
+- Profile with Spring Boot Actuator metrics before and after migration.""",
+    },
+    {
+        "title": "Testing Strategy After Migration",
+        "category": "best-practices",
+        "content": """Comprehensive testing approach for migrated Spring Boot applications.
+
+Unit Tests (@WebMvcTest):
+```java
+@WebMvcTest(CustomerController.class)
+class CustomerControllerTest {
+    @Autowired MockMvc mockMvc;
+    @MockBean CustomerService customerService;
+
+    @Test
+    void getCustomer_returns200() throws Exception {
+        when(customerService.findById(1L)).thenReturn(Optional.of(testCustomer()));
+        mockMvc.perform(get("/api/customers/1"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.name").value("John"));
+    }
+
+    @Test
+    void getCustomer_returns404_whenNotFound() throws Exception {
+        when(customerService.findById(1L)).thenReturn(Optional.empty());
+        mockMvc.perform(get("/api/customers/1"))
+            .andExpect(status().isNotFound());
+    }
+}
+```
+
+Integration Tests (@SpringBootTest):
+```java
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@AutoConfigureMockMvc
+class CustomerIntegrationTest {
+    @Autowired MockMvc mockMvc;
+    @Autowired CustomerRepository customerRepository;
+
+    @Test
+    void createAndGetCustomer() throws Exception {
+        String json = objectMapper.writeValueAsString(new CustomerCreate("John", "john@test.com"));
+        mockMvc.perform(post("/api/customers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").exists());
+    }
+}
+```
+
+Testing checklist for migrated code:
+1. Every controller endpoint has unit test
+2. Happy path + error cases covered
+3. Integration tests verify end-to-end flow
+4. DataWeave conversions have equivalent assertions
+5. Error handling returns correct HTTP status codes
+6. Authentication/authorization tested with @WithMockUser""",
+    },
+
+    # ==================================================================
+    #  17. Advanced Patterns (10 docs)
+    # ==================================================================
+    {
+        "title": "Circuit Breaker Pattern",
+        "category": "advanced-patterns",
+        "content": """MuleSoft until-successful with retries -> Spring Resilience4j Circuit Breaker
+
+MuleSoft XML:
+```xml
+<until-successful maxRetries="3" millisBetweenRetries="2000">
+    <http:request config-ref="External_API" method="GET" path="/data"/>
+</until-successful>
+```
+
+Spring Boot with Resilience4j:
+```java
+@Service
+public class ExternalApiService {
+    private final WebClient webClient;
+
+    @CircuitBreaker(name = "externalApi", fallbackMethod = "fallbackGetData")
+    @Retry(name = "externalApi")
+    public DataResponse getData() {
+        return webClient.get().uri("/data")
+            .retrieve()
+            .bodyToMono(DataResponse.class)
+            .block();
+    }
+
+    private DataResponse fallbackGetData(Exception e) {
+        log.warn("Circuit breaker fallback: {}", e.getMessage());
+        return DataResponse.cached();
+    }
+}
+```
+
+```yaml
+resilience4j:
+  circuitbreaker:
+    instances:
+      externalApi:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+  retry:
+    instances:
+      externalApi:
+        maxAttempts: 3
+        waitDuration: 2s
+        retryExceptions:
+          - java.io.IOException
+          - java.net.ConnectException
+```
+
+Key mapping rules:
+- MuleSoft until-successful maps to @Retry.
+- maxRetries maps to maxAttempts.
+- millisBetweenRetries maps to waitDuration.
+- Add @CircuitBreaker for fault tolerance beyond simple retry.
+- Define fallback methods for graceful degradation.""",
+    },
+    {
+        "title": "Scatter-Gather to Parallel Execution",
+        "category": "advanced-patterns",
+        "content": """MuleSoft scatter-gather -> Spring CompletableFuture parallel calls
+
+MuleSoft XML:
+```xml
+<scatter-gather>
+    <route>
+        <http:request config-ref="Service_A" method="GET" path="/data-a"/>
+    </route>
+    <route>
+        <http:request config-ref="Service_B" method="GET" path="/data-b"/>
+    </route>
+    <route>
+        <http:request config-ref="Service_C" method="GET" path="/data-c"/>
+    </route>
+</scatter-gather>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class AggregationService {
+    private final WebClient serviceA;
+    private final WebClient serviceB;
+    private final WebClient serviceC;
+    private final Executor executor;
+
+    public AggregatedResponse fetchAll() {
+        CompletableFuture<DataA> futureA = CompletableFuture.supplyAsync(
+            () -> serviceA.get().uri("/data-a").retrieve().bodyToMono(DataA.class).block(), executor);
+        CompletableFuture<DataB> futureB = CompletableFuture.supplyAsync(
+            () -> serviceB.get().uri("/data-b").retrieve().bodyToMono(DataB.class).block(), executor);
+        CompletableFuture<DataC> futureC = CompletableFuture.supplyAsync(
+            () -> serviceC.get().uri("/data-c").retrieve().bodyToMono(DataC.class).block(), executor);
+
+        CompletableFuture.allOf(futureA, futureB, futureC).join();
+
+        return new AggregatedResponse(futureA.join(), futureB.join(), futureC.join());
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft scatter-gather routes map to parallel CompletableFuture calls.
+- Each route becomes a supplyAsync() call.
+- CompletableFuture.allOf() waits for all routes to complete.
+- Use a dedicated thread pool (Executor) for parallel calls.
+- Handle partial failures with exceptionally() or handle().""",
+    },
+    {
+        "title": "Choice Router to Strategy Pattern",
+        "category": "advanced-patterns",
+        "content": """MuleSoft choice router -> Spring Boot Strategy Pattern
+
+MuleSoft XML:
+```xml
+<choice>
+    <when expression="#[payload.type == 'EMAIL']">
+        <flow-ref name="sendEmailFlow"/>
+    </when>
+    <when expression="#[payload.type == 'SMS']">
+        <flow-ref name="sendSmsFlow"/>
+    </when>
+    <when expression="#[payload.type == 'PUSH']">
+        <flow-ref name="sendPushFlow"/>
+    </when>
+    <otherwise>
+        <logger level="WARN" message="Unknown notification type"/>
+    </otherwise>
+</choice>
+```
+
+Spring Boot Strategy Pattern:
+```java
+public interface NotificationStrategy {
+    void send(NotificationRequest request);
+    String getType();
+}
+
+@Component
+public class EmailNotificationStrategy implements NotificationStrategy {
+    public void send(NotificationRequest request) { /* email logic */ }
+    public String getType() { return "EMAIL"; }
+}
+
+@Component
+public class SmsNotificationStrategy implements NotificationStrategy {
+    public void send(NotificationRequest request) { /* SMS logic */ }
+    public String getType() { return "SMS"; }
+}
+
+@Service
+public class NotificationService {
+    private final Map<String, NotificationStrategy> strategies;
+
+    public NotificationService(List<NotificationStrategy> strategyList) {
+        this.strategies = strategyList.stream()
+            .collect(Collectors.toMap(NotificationStrategy::getType, s -> s));
+    }
+
+    public void sendNotification(NotificationRequest request) {
+        NotificationStrategy strategy = strategies.get(request.getType());
+        if (strategy == null) {
+            log.warn("Unknown notification type: {}", request.getType());
+            return;
+        }
+        strategy.send(request);
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft choice router with multiple when clauses maps to Strategy Pattern.
+- Each when branch becomes a Strategy implementation.
+- otherwise clause becomes the null/default case.
+- Spring auto-discovers all strategy beans via List injection.
+- Eliminates long if-else chains and is easily extensible.""",
+    },
+    {
+        "title": "For-Each to Stream Processing",
+        "category": "advanced-patterns",
+        "content": """MuleSoft foreach -> Java Stream operations
+
+MuleSoft XML:
+```xml
+<foreach collection="#[payload.items]">
+    <set-variable variableName="item" value="#[payload]"/>
+    <http:request config-ref="Inventory_API" method="GET"
+        path="/stock/#[vars.item.productId]"/>
+    <set-variable variableName="stockLevel" value="#[payload.quantity]"/>
+    <choice>
+        <when expression="#[vars.stockLevel > 0]">
+            <set-variable variableName="item.available" value="true"/>
+        </when>
+        <otherwise>
+            <set-variable variableName="item.available" value="false"/>
+        </otherwise>
+    </choice>
+</foreach>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class InventoryCheckService {
+    private final InventoryClient inventoryClient;
+
+    public List<ItemAvailability> checkAvailability(List<OrderItem> items) {
+        return items.stream()
+            .map(item -> {
+                StockInfo stock = inventoryClient.getStock(item.getProductId());
+                return new ItemAvailability(
+                    item.getProductId(),
+                    item.getQuantity(),
+                    stock.getQuantity() > 0
+                );
+            })
+            .collect(Collectors.toList());
+    }
+
+    // Parallel version for better performance:
+    public List<ItemAvailability> checkAvailabilityParallel(List<OrderItem> items) {
+        return items.parallelStream()
+            .map(item -> {
+                StockInfo stock = inventoryClient.getStock(item.getProductId());
+                return new ItemAvailability(item.getProductId(), item.getQuantity(),
+                    stock.getQuantity() > 0);
+            })
+            .collect(Collectors.toList());
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft foreach maps to Java .stream().map().collect().
+- Variables set inside foreach become fields in mapped objects.
+- choice inside foreach becomes ternary or if-else in map lambda.
+- Use parallelStream() for independent, I/O-bound operations.
+- For large collections with side effects, consider batch processing.""",
+    },
+    {
+        "title": "Enrichment Pattern with WebClient",
+        "category": "advanced-patterns",
+        "content": """MuleSoft enricher/target -> Spring Boot data enrichment
+
+MuleSoft XML:
+```xml
+<enricher target="#[vars.customerDetails]">
+    <http:request config-ref="Customer_API" method="GET"
+        path="/customers/#[payload.customerId]"/>
+</enricher>
+<enricher target="#[vars.shippingEstimate]">
+    <http:request config-ref="Shipping_API" method="POST" path="/estimate">
+        <http:body>#[output application/json --- { address: payload.address, weight: payload.weight }]</http:body>
+    </http:request>
+</enricher>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class OrderEnrichmentService {
+    private final CustomerClient customerClient;
+    private final ShippingClient shippingClient;
+
+    public EnrichedOrder enrichOrder(Order order) {
+        // Parallel enrichment
+        CompletableFuture<CustomerDetails> customerFuture =
+            CompletableFuture.supplyAsync(() ->
+                customerClient.getCustomer(order.getCustomerId()));
+
+        CompletableFuture<ShippingEstimate> shippingFuture =
+            CompletableFuture.supplyAsync(() ->
+                shippingClient.estimate(order.getAddress(), order.getWeight()));
+
+        CompletableFuture.allOf(customerFuture, shippingFuture).join();
+
+        return EnrichedOrder.builder()
+            .order(order)
+            .customer(customerFuture.join())
+            .shipping(shippingFuture.join())
+            .build();
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft enricher with target variable maps to service method calls.
+- Multiple enrichers can run in parallel with CompletableFuture.
+- Target variables become fields in an enriched response object.
+- Use Builder pattern for assembling enriched objects.
+- Handle enrichment failures gracefully (return partial data).""",
+    },
+    {
+        "title": "Idempotent Message Filter",
+        "category": "advanced-patterns",
+        "content": """MuleSoft idempotent-message-validator -> Spring Boot idempotency
+
+MuleSoft XML:
+```xml
+<idempotent-message-validator idExpression="#[payload.messageId]"
+    objectStore="idempotentStore"/>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class IdempotencyService {
+    private final StringRedisTemplate redisTemplate;
+    private static final Duration TTL = Duration.ofHours(24);
+
+    public boolean isProcessed(String messageId) {
+        return Boolean.TRUE.equals(
+            redisTemplate.hasKey("idempotent:" + messageId));
+    }
+
+    public void markProcessed(String messageId) {
+        redisTemplate.opsForValue().set(
+            "idempotent:" + messageId, "1", TTL);
+    }
+}
+
+@Component
+public class OrderMessageHandler {
+    private final IdempotencyService idempotencyService;
+    private final OrderService orderService;
+
+    @JmsListener(destination = "orders.queue")
+    public void handleOrder(OrderMessage message) {
+        if (idempotencyService.isProcessed(message.getMessageId())) {
+            log.info("Duplicate message ignored: {}", message.getMessageId());
+            return;
+        }
+        orderService.processOrder(message);
+        idempotencyService.markProcessed(message.getMessageId());
+    }
+}
+
+// As an annotation (custom aspect):
+@Aspect
+@Component
+public class IdempotentAspect {
+    @Around("@annotation(idempotent)")
+    public Object checkIdempotency(ProceedingJoinPoint pjp, Idempotent idempotent) throws Throwable {
+        String key = extractKey(pjp, idempotent);
+        if (idempotencyService.isProcessed(key)) return null;
+        Object result = pjp.proceed();
+        idempotencyService.markProcessed(key);
+        return result;
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft idempotent-message-validator maps to Redis-based idempotency check.
+- idExpression maps to the message ID extraction logic.
+- objectStore maps to Redis with TTL.
+- Implement as service, filter, or AOP aspect.
+- Always set a TTL to prevent unbounded storage growth.""",
+    },
+    {
+        "title": "Watermark Pattern for Incremental Processing",
+        "category": "advanced-patterns",
+        "content": """MuleSoft watermark -> Spring Boot incremental polling
+
+MuleSoft XML:
+```xml
+<flow name="incrementalSyncFlow">
+    <scheduler>
+        <scheduling-strategy>
+            <fixed-frequency frequency="60000"/>
+        </scheduling-strategy>
+    </scheduler>
+    <os:retrieve key="lastProcessedTimestamp" objectStore="watermarkStore"
+        target="lastTimestamp" defaultValue="#[now() - |P1D|]"/>
+    <db:select config-ref="Database_Config">
+        <db:sql>SELECT * FROM orders WHERE updated_at > :since ORDER BY updated_at</db:sql>
+        <db:input-parameters>#[{ 'since': vars.lastTimestamp }]</db:input-parameters>
+    </db:select>
+    <foreach>
+        <flow-ref name="processOrderSubFlow"/>
+    </foreach>
+    <os:store key="lastProcessedTimestamp" objectStore="watermarkStore"
+        value="#[now()]"/>
+</flow>
+```
+
+Spring Boot Java:
+```java
+@Service
+public class IncrementalSyncService {
+    private final OrderRepository orderRepository;
+    private final StringRedisTemplate redisTemplate;
+    private static final String WATERMARK_KEY = "sync:orders:lastTimestamp";
+
+    @Scheduled(fixedDelay = 60000)
+    public void syncOrders() {
+        LocalDateTime lastTimestamp = getWatermark();
+        List<Order> newOrders = orderRepository
+            .findByUpdatedAtAfterOrderByUpdatedAt(lastTimestamp);
+
+        if (newOrders.isEmpty()) return;
+
+        for (Order order : newOrders) {
+            processOrder(order);
+        }
+
+        // Update watermark to latest processed timestamp
+        LocalDateTime newWatermark = newOrders.get(newOrders.size() - 1).getUpdatedAt();
+        setWatermark(newWatermark);
+        log.info("Synced {} orders, watermark updated to {}", newOrders.size(), newWatermark);
+    }
+
+    private LocalDateTime getWatermark() {
+        String stored = redisTemplate.opsForValue().get(WATERMARK_KEY);
+        return stored != null ? LocalDateTime.parse(stored) : LocalDateTime.now().minusDays(1);
+    }
+
+    private void setWatermark(LocalDateTime timestamp) {
+        redisTemplate.opsForValue().set(WATERMARK_KEY, timestamp.toString());
+    }
+}
+```
+
+Key mapping rules:
+- MuleSoft watermark with ObjectStore maps to Redis-stored timestamp.
+- os:retrieve with defaultValue maps to getWatermark() with fallback.
+- os:store after processing maps to setWatermark() update.
+- Scheduler frequency maps to @Scheduled fixedDelay.
+- Always update watermark AFTER successful processing.""",
+    },
 ]
 
 

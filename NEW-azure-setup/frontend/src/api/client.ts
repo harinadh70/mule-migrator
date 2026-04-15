@@ -1,8 +1,11 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import type { ApiError } from "@/types/common";
+import { isAzureAdEnabled, getApiAccessToken } from "@/auth/msalConfig";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v2";
 const IS_DEV = import.meta.env.DEV;
+
+let isRedirecting = false;
 
 const apiClient = axios.create({
   baseURL: BASE_URL,
@@ -14,10 +17,17 @@ const apiClient = axios.create({
 
 apiClient.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
-    // Auth token from localStorage or SWA built-in auth cookie
-    const token = localStorage.getItem("auth-token");
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`;
+    const storedToken = localStorage.getItem("auth-token");
+
+    if (storedToken === "msal" && isAzureAdEnabled) {
+      // MSAL user — acquire a real Azure AD access token for the API
+      const accessToken = await getApiAccessToken();
+      if (accessToken && config.headers) {
+        config.headers.Authorization = `Bearer ${accessToken}`;
+      }
+    } else if (storedToken && config.headers) {
+      // Custom email/password token — use as-is
+      config.headers.Authorization = `Bearer ${storedToken}`;
     }
 
     if (IS_DEV) {
@@ -33,29 +43,20 @@ apiClient.interceptors.request.use(
 );
 
 apiClient.interceptors.response.use(
-  (response) => {
-    if (IS_DEV) {
-      console.log(
-        `[API] Response ${response.status}`,
-        response.config.url
-      );
-    }
-    return response;
-  },
+  (response) => response,
   (error: AxiosError<ApiError>) => {
-    if (IS_DEV) {
-      console.error(
-        `[API] Error ${error.response?.status}`,
-        error.config?.url,
-        error.response?.data
-      );
-    }
-
-    if (error.response?.status === 401) {
-      localStorage.removeItem("auth-token");
+    // On 401, clear auth and redirect to login
+    if (
+      error.response?.status === 401 &&
+      !isRedirecting
+    ) {
       const currentPath = window.location.pathname;
       if (currentPath !== "/login") {
+        isRedirecting = true;
+        localStorage.removeItem("auth-token");
+        localStorage.removeItem("migrator-auth");
         window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
+        setTimeout(() => { isRedirecting = false; }, 5000);
       }
     }
 
@@ -63,6 +64,7 @@ apiClient.interceptors.response.use(
       status: error.response?.status || 0,
       message:
         error.response?.data?.message ||
+        error.response?.data?.error ||
         error.message ||
         "An unexpected error occurred",
       detail: error.response?.data?.detail,

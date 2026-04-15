@@ -57,15 +57,43 @@ function splitXmlFiles(xml: string, projectName: string): Array<{name: string; c
 export async function createMigration(
   data: MigrationCreate
 ): Promise<MigrationJob> {
+  // Build input_xml_files and dataweave_scripts from uploaded files or pasted XML
+  let inputXmlFiles: Array<{ name: string; content: string; size: number }>;
+  const dataweaveScripts: Record<string, string> = {};
+
+  console.log("[createMigration] uploadedFiles:", data.uploadedFiles?.length ?? 0, "sourceXml length:", data.sourceXml?.length ?? 0);
+
+  if (data.uploadedFiles && data.uploadedFiles.length > 0) {
+    // Use uploaded files directly — separate XML from supporting files
+    inputXmlFiles = [];
+    for (const f of data.uploadedFiles) {
+      const lower = f.name.toLowerCase();
+      if (lower.endsWith(".xml")) {
+        inputXmlFiles.push({ name: f.name, content: f.content, size: f.size });
+      } else {
+        // Send RAML, YAML, DWL, properties, etc. as dataweave_scripts context
+        dataweaveScripts[f.path || f.name] = f.content;
+      }
+    }
+    // Ensure at least one XML file
+    if (inputXmlFiles.length === 0) {
+      inputXmlFiles = splitXmlFiles(data.sourceXml, data.name);
+    }
+  } else {
+    // Pasted XML mode — use splitter
+    inputXmlFiles = splitXmlFiles(data.sourceXml, data.name);
+  }
+
   // Transform frontend shape to backend API shape
   const payload = {
     project_name: data.name,
     group_id: data.config.groupId || "com.example",
     java_version: data.config.javaVersion || "17",
-    input_xml_files: splitXmlFiles(data.sourceXml, data.name),
+    input_xml_files: inputXmlFiles,
+    dataweave_scripts: Object.keys(dataweaveScripts).length > 0 ? dataweaveScripts : undefined,
     llm_config: {
-      provider: data.config.llmEnabled ? "azure_openai" : "",
-      model: data.config.llmEnabled ? "gpt-4.1" : "",
+      provider: data.config.llmEnabled ? (data.config.llmProvider || "github_copilot") : "",
+      model: data.config.llmEnabled ? (data.config.llmModel || "gpt-4.1") : "",
       enabled: !!data.config.llmEnabled,
     },
     source_type: data.sourceType,
